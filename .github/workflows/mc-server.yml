@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 360  # max 6 hours
 
     steps:
-    # 1️⃣ Checkout repo
+    # 1️⃣ Checkout repository
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
@@ -29,8 +29,8 @@ jobs:
         sudo tailscale up --authkey ${{ secrets.TAILSCALE_AUTH_KEY }} --accept-routes --advertise-exit-node
         tailscale ip -4
 
-    # 4️⃣ Ensure Paper jar exists
-    - name: Download Paper 1.21.8 build #58
+    # 4️⃣ Ensure Paper jar exists (skip download if already in repo)
+    - name: Ensure Paper jar
       run: |
         if [ ! -f paper-1.21.8-58.jar ]; then
           curl -L -o paper-1.21.8-58.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
@@ -40,13 +40,13 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 6️⃣ Ensure server uses repo files
-    - name: Use repo configs
+    # 6️⃣ Ensure server uses repo files (overwrite any generated files)
+    - name: Use repo files
       run: |
-        cp -f server.properties server.properties
-        cp -r plugins/ plugins/
         cp -r world/ world/
+        cp -r plugins/ plugins/
         cp -r config/ config/
+        cp server.properties server.properties
 
     # 7️⃣ Run server with auto-save, rolling workflow, backup, and stop
     - name: Run Minecraft Server
@@ -54,7 +54,7 @@ jobs:
         echo "Server running on Tailscale IP:"
         tailscale ip -4
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
-        
+
         # Loop: auto-save every 2 minutes
         for i in {1..150}; do
           sleep 120
