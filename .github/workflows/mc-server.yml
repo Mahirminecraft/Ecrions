@@ -2,9 +2,6 @@ name: Minecraft Paper Server
 
 on:
   workflow_dispatch:  # Manual trigger
-  # Optional schedule:
-  # schedule:
-  #   - cron: '0 0 * * *'  # daily at midnight UTC
 
 jobs:
   minecraft:
@@ -41,21 +38,23 @@ jobs:
       run: |
         echo "eula=true" > server/eula.txt
 
-    # 6. Run Minecraft server inside server/ folder
-    - name: Run Minecraft Server
+    # 6. Run Minecraft server and auto-save every 2 minutes
+    - name: Run Minecraft Server with auto-save
       run: |
         cd server
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
-        sleep 300m  # keep workflow alive
-
-    # 7. Commit server changes back to GitHub
-    - name: Commit server changes
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        cp -r server/world ./world
-        cp -r server/plugins ./plugins
-        cp -r server/config ./config
-        git add world plugins config
-        git commit -m "Auto-update server files from workflow run" || echo "No changes to commit"
-        git push origin main
+        # Loop to save every 2 minutes for 5 hours
+        for i in {1..150}; do
+          sleep 120
+          echo "Saving server data... ($i/150)"
+          cd ..
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          cp -r server/world ./world
+          cp -r server/plugins ./plugins
+          cp -r server/config ./config
+          git add world plugins config
+          git commit -m "Auto-save server data at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes to commit"
+          git push origin main
+          cd server
+        done
