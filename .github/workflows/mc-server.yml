@@ -1,24 +1,28 @@
 name: Minecraft Paper Server
 
 on:
-  workflow_dispatch:  # Manually trigger the workflow
-  schedule:
-    - cron: '0 0 * * *'  # Optional: Automatically run daily at midnight UTC
+  workflow_dispatch:  # Manual trigger
+  # Optional: schedule:
+  # schedule:
+  #   - cron: '0 0 * * *'  # daily at midnight UTC
 
 jobs:
   minecraft:
     runs-on: ubuntu-latest
 
     steps:
+    # 1. Checkout repo
     - name: Checkout repository
       uses: actions/checkout@v3
 
+    # 2. Setup Java 21
     - name: Set up Java 21
       uses: actions/setup-java@v3
       with:
         distribution: temurin
         java-version: '21'
 
+    # 3. Download Paper build #58
     - name: Download Paper build #58
       run: |
         mkdir -p server
@@ -26,15 +30,30 @@ jobs:
         mv server/paper-1.21.8-58.jar server/paper.jar
         ls -lh server/paper.jar
 
+    # 4. Restore world, plugins, and config
     - name: Restore server files
       run: |
         cp -r world server/ || true
         cp -r plugins server/ || true
         cp -r config server/ || true
 
+    # 5. Accept EULA automatically
     - name: Accept EULA
       run: echo "eula=true" > server/eula.txt
-      
+
+    # 6. Run server and execute commands (without cd)
+    - name: Run Minecraft Server and execute commands
+      run: |
+        screen -dmS mc-server java -Xms14G -Xmx14G -jar server/paper.jar nogui
+        sleep 20
+        if [ -f commands.txt ]; then
+          while read cmd; do
+            screen -S mc-server -p 0 -X stuff "$cmd$(printf '\r')"
+          done < commands.txt
+        fi
+        sleep 300m
+
+    # 7. Commit server changes back to GitHub
     - name: Commit server changes
       run: |
         git config --global user.name "github-actions[bot]"
