@@ -1,4 +1,4 @@
-name: Minecraft Paper Server Rolling
+name: Minecraft Paper Server Full Repo Run
 
 on:
   workflow_dispatch:
@@ -9,11 +9,11 @@ jobs:
     timeout-minutes: 360  # max 6 hours
 
     steps:
-    # 1️⃣ Checkout repository
+    # 1️⃣ Checkout repo (all files/folders you listed will come from repo)
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
-        persist-credentials: false  # use GH_PAT for pushes
+        persist-credentials: false
 
     # 2️⃣ Setup Java 21
     - name: Setup Java
@@ -22,40 +22,38 @@ jobs:
         distribution: temurin
         java-version: '21'
 
-    # 3️⃣ Install Tailscale
-    - name: Install Tailscale
-      run: |
-        curl -fsSL https://tailscale.com/install.sh | sh
-        sudo tailscale up --authkey ${{ secrets.TAILSCALE_AUTH_KEY }} --accept-routes --advertise-exit-node
-        tailscale ip -4
-
-    # 4️⃣ Ensure Paper jar exists (skip download if already in repo)
+    # 3️⃣ Ensure Paper jar exists (skip download if already in repo)
     - name: Ensure Paper jar
       run: |
         if [ ! -f paper-1.21.8-58.jar ]; then
           curl -L -o paper-1.21.8-58.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
         fi
 
-    # 5️⃣ Accept EULA
+    # 4️⃣ Accept EULA (overwrite if needed)
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 6️⃣ Run server with auto-save, rolling workflow, backup, and stop
+    # 5️⃣ Start server using ALL repo files
     - name: Run Minecraft Server
       run: |
-        echo "Server running on Tailscale IP:"
-        tailscale ip -4
+        echo "Starting server using all repo files..."
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
 
         # Loop: auto-save every 2 minutes
         for i in {1..150}; do
           sleep 120
           echo "Auto-save ($i/150)"
+
+          # Git config
           git config --global user.name "Auto Save Bot"
           git config --global user.email "autosave@github.com"
           git remote remove origin || true
           git remote add origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
-          git add -A || true
+
+          # Add all files/folders from repo explicitly
+          git add whitelist.json version_history.json usercache.json spigot.yml server.properties permissions.yml paper-1.21.8-58.jar ops.json help.yml eula.txt commands.yml bukkit.yml banned-players.json banned-ips.json world world_nether world_the_end versions plugins libraries config
+
+          # Commit & push
           git commit -m "Auto-save at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes to commit"
           git push origin HEAD:main --force || echo "Push failed"
 
@@ -73,7 +71,7 @@ jobs:
           if [ "$i" -eq 150 ]; then
             echo "Creating backup..."
             ZIP_NAME="minecraft-backup-$(date +'%Y-%m-%d_%H-%M-%S').zip"
-            zip -r $ZIP_NAME world/ plugins/ config/
+            zip -r $ZIP_NAME whitelist.json version_history.json usercache.json spigot.yml server.properties permissions.yml paper-1.21.8-58.jar ops.json help.yml eula.txt commands.yml bukkit.yml banned-players.json banned-ips.json world world_nether world_the_end versions plugins libraries config
 
             # Create a Release and upload zip
             RELEASE_RESPONSE=$(curl -s -X POST \
@@ -92,7 +90,7 @@ jobs:
 
             echo "Stopping old workflow..."
             pkill -f "paper-1.21.8-58.jar"  # stop Minecraft server
-            exit 0  # terminate workflow
+            exit 0
           fi
         done
       env:
