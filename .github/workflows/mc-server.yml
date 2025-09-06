@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Checkout repo
+    # 1. Checkout repository
     - name: Checkout repository
       uses: actions/checkout@v3
 
@@ -27,8 +27,7 @@ jobs:
       run: |
         mkdir -p server
         curl -L -o server/paper-1.21.8-58.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
-        mv server/paper-1.21.8-58.jar server/paper.jar
-        ls -lh server/paper.jar
+        ls -lh server/paper-1.21.8-58.jar
 
     # 4. Restore world, plugins, and config
     - name: Restore server files
@@ -41,11 +40,11 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > server/eula.txt
 
-    # 6. Run Minecraft server (without executing commands)
+    # 6. Run Minecraft server (without screen or commands)
     - name: Run Minecraft Server
       run: |
-        screen -dmS mc-server java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui
-        sleep 300m  # maximum workflow runtime
+        java -Xms14G -Xmx14G -jar server/paper-1.21.8-58.jar nogui &
+        sleep 300m  # keep workflow alive
 
     # 7. Commit server changes back to GitHub
     - name: Commit server changes
