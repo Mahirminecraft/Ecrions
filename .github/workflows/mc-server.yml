@@ -43,7 +43,7 @@ jobs:
       run: |
         cd server
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
-        # Loop to save every 2 minutes for 5 hours
+        # Loop to save every 2 minutes for ~5 hours
         for i in {1..150}; do
           sleep 120
           echo "Saving server data... ($i/150)"
@@ -55,6 +55,8 @@ jobs:
           cp -r server/config ./config
           git add world plugins config
           git commit -m "Auto-save server data at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes to commit"
-          git push origin main
+          git push https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git HEAD:main
           cd server
         done
+      env:
+        GH_PAT: ${{ secrets.GH_PAT }}
