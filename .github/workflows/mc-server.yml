@@ -8,43 +8,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Checkout repo without default bot credentials
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
-        persist-credentials: false
+        persist-credentials: false  # important, use GH_PAT for push
 
-    # 2. Setup Java 21
-    - name: Set up Java 21
+    - name: Setup Java 21
       uses: actions/setup-java@v3
       with:
         distribution: temurin
         java-version: '21'
 
-    # 3. Download Paper build #58
-    - name: Download Paper build #58
+    - name: Ensure Paper jar exists
       run: |
         if [ ! -f paper-1.21.8-58.jar ]; then
           curl -L -o paper-1.21.8-58.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
         fi
-        ls -lh paper-1.21.8-58.jar
 
-    # 4. Accept EULA
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 5. Run Minecraft server with autosave
-    - name: Run Minecraft Server
+    - name: Run server with autosave
       run: |
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         for i in {1..150}; do
           sleep 120
-          echo "Saving server data... ($i/150)"
+          echo "Saving server data ($i/150)"
           git config --global user.name "Auto Save Bot"
           git config --global user.email "autosave@github.com"
           git remote remove origin || true
           git remote add origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
-          git fetch origin
           git add -A || true
           git commit -m "Auto-save at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes to commit"
           git push origin HEAD:main --force || echo "Push failed"
