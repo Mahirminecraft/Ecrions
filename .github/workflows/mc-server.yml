@@ -34,19 +34,7 @@ jobs:
 
     - name: Accept EULA
       run: echo "eula=true" > server/eula.txt
-
-    - name: Run Minecraft Server and execute commands
-      run: |
-        cd server
-        screen -dmS mc-server java -Xms14G -Xmx14G -jar paper.jar nogui
-        sleep 20
-        if [ -f ../commands.txt ]; then
-          while read cmd; do
-            screen -S mc-server -p 0 -X stuff "$cmd$(printf '\r')"
-          done < ../commands.txt
-        fi
-        sleep 300m
-
+      
     - name: Commit server changes
       run: |
         git config --global user.name "github-actions[bot]"
