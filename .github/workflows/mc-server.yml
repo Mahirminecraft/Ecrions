@@ -1,16 +1,18 @@
 name: Minecraft Paper Server
 
 on:
-  workflow_dispatch:  # manual trigger
+  workflow_dispatch:
 
 jobs:
   minecraft:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Checkout repo
+    # 1. Checkout repo without credentials
     - name: Checkout repository
       uses: actions/checkout@v3
+      with:
+        persist-credentials: false   # 🔥 prevents github-actions[bot] auth
 
     # 2. Setup Java 21
     - name: Set up Java 21
@@ -31,7 +33,7 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 5. Run Minecraft server with autosave every 2 mins
+    # 5. Run server with autosave every 2 mins
     - name: Run Minecraft Server
       run: |
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
