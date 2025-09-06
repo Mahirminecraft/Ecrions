@@ -1,4 +1,4 @@
-name: Minecraft Paper Server
+name: Minecraft Paper Server with Tailscale
 
 on:
   workflow_dispatch:
@@ -8,28 +8,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
+    # 1️⃣ Checkout repository
+    - name: Checkout repo
       uses: actions/checkout@v3
       with:
-        persist-credentials: false  # important, use GH_PAT for push
+        persist-credentials: false  # important to use GH_PAT instead of bot
 
+    # 2️⃣ Setup Java 21
     - name: Setup Java 21
       uses: actions/setup-java@v3
       with:
         distribution: temurin
         java-version: '21'
 
-    - name: Ensure Paper jar exists
+    # 3️⃣ Install Tailscale
+    - name: Install Tailscale
+      run: |
+        curl -fsSL https://tailscale.com/install.sh | sh
+        sudo tailscale up --authkey ${{ secrets.TAILSCALE_AUTH_KEY }} --accept-routes --advertise-exit-node
+        tailscale ip -4
+
+    # 4️⃣ Ensure Paper jar exists
+    - name: Download Paper 1.21.8 build #58
       run: |
         if [ ! -f paper-1.21.8-58.jar ]; then
           curl -L -o paper-1.21.8-58.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
         fi
 
+    # 5️⃣ Accept EULA
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    - name: Run server with autosave
+    # 6️⃣ Run server with autosave every 2 minutes
+    - name: Run Minecraft Server
       run: |
+        echo "Server running on Tailscale IP:"
+        tailscale ip -4
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         for i in {1..150}; do
           sleep 120
