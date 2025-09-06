@@ -1,0 +1,59 @@
+name: Minecraft Paper Server
+
+on:
+  workflow_dispatch:  # Manually trigger the workflow
+  schedule:
+    - cron: '0 0 * * *'  # Optional: Automatically run daily at midnight UTC
+
+jobs:
+  minecraft:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Java 21
+      uses: actions/setup-java@v3
+      with:
+        distribution: temurin
+        java-version: '21'
+
+    - name: Download Paper build #58
+      run: |
+        mkdir -p server
+        curl -L -o server/paper-1.21.8-58.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
+        mv server/paper-1.21.8-58.jar server/paper.jar
+        ls -lh server/paper.jar
+
+    - name: Restore server files
+      run: |
+        cp -r world server/ || true
+        cp -r plugins server/ || true
+        cp -r config server/ || true
+
+    - name: Accept EULA
+      run: echo "eula=true" > server/eula.txt
+
+    - name: Run Minecraft Server and execute commands
+      run: |
+        cd server
+        screen -dmS mc-server java -Xms14G -Xmx14G -jar paper.jar nogui
+        sleep 20
+        if [ -f ../commands.txt ]; then
+          while read cmd; do
+            screen -S mc-server -p 0 -X stuff "$cmd$(printf '\r')"
+          done < ../commands.txt
+        fi
+        sleep 300m
+
+    - name: Commit server changes
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        cp -r server/world ./world
+        cp -r server/plugins ./plugins
+        cp -r server/config ./config
+        git add world plugins config
+        git commit -m "Auto-update server files from workflow run" || echo "No changes to commit"
+        git push origin main
