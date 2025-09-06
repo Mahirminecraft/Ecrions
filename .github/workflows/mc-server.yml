@@ -41,17 +41,11 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > server/eula.txt
 
-    # 6. Run server and execute commands (without cd)
-    - name: Run Minecraft Server and execute commands
+    # 6. Run Minecraft server (without executing commands)
+    - name: Run Minecraft Server
       run: |
         screen -dmS mc-server java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui
-        sleep 20
-        if [ -f commands.txt ]; then
-          while read cmd; do
-            screen -S mc-server -p 0 -X stuff "$cmd$(printf '\r')"
-          done < commands.txt
-        fi
-        sleep 300m
+        sleep 300m  # maximum workflow runtime
 
     # 7. Commit server changes back to GitHub
     - name: Commit server changes
