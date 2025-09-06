@@ -41,10 +41,11 @@ jobs:
       run: |
         echo "eula=true" > server/eula.txt
 
-    # 6. Run Minecraft server
+    # 6. Run Minecraft server inside server/ folder
     - name: Run Minecraft Server
       run: |
-        java -Xms14G -Xmx14G -jar server/paper-1.21.8-58.jar nogui &
+        cd server
+        java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         sleep 300m  # keep workflow alive
 
     # 7. Commit server changes back to GitHub
