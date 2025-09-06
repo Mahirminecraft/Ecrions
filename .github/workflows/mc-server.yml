@@ -2,7 +2,7 @@ name: Minecraft Paper Server
 
 on:
   workflow_dispatch:  # Manual trigger
-  # Optional: schedule:
+  # Optional schedule:
   # schedule:
   #   - cron: '0 0 * * *'  # daily at midnight UTC
 
@@ -36,11 +36,12 @@ jobs:
         cp -r plugins server/ || true
         cp -r config server/ || true
 
-    # 5. Accept EULA automatically
+    # 5. Accept EULA
     - name: Accept EULA
-      run: echo "eula=true" > server/eula.txt
+      run: |
+        echo "eula=true" > server/eula.txt
 
-    # 6. Run Minecraft server (without screen or commands)
+    # 6. Run Minecraft server
     - name: Run Minecraft Server
       run: |
         java -Xms14G -Xmx14G -jar server/paper-1.21.8-58.jar nogui &
