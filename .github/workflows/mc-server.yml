@@ -1,4 +1,4 @@
-name: Minecraft Paper Server with Tailscale
+name: Minecraft Paper Server Rolling
 
 on:
   workflow_dispatch:
@@ -6,16 +6,17 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours max
 
     steps:
-    # 1️⃣ Checkout repository
-    - name: Checkout repo
+    # 1️⃣ Checkout repo
+    - name: Checkout repository
       uses: actions/checkout@v3
       with:
-        persist-credentials: false  # important to use GH_PAT instead of bot
+        persist-credentials: false  # use GH_PAT instead of default bot
 
     # 2️⃣ Setup Java 21
-    - name: Setup Java 21
+    - name: Setup Java
       uses: actions/setup-java@v3
       with:
         distribution: temurin
@@ -39,15 +40,17 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 6️⃣ Run server with autosave every 2 minutes
+    # 6️⃣ Run server with auto-save and rolling workflow
     - name: Run Minecraft Server
       run: |
         echo "Server running on Tailscale IP:"
         tailscale ip -4
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
+        
+        # Loop for auto-save and rolling actions
         for i in {1..150}; do
-          sleep 120
-          echo "Saving server data ($i/150)"
+          sleep 120  # every 2 minutes
+          echo "Auto-save ($i/150)"
           git config --global user.name "Auto Save Bot"
           git config --global user.email "autosave@github.com"
           git remote remove origin || true
@@ -55,6 +58,38 @@ jobs:
           git add -A || true
           git commit -m "Auto-save at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes to commit"
           git push origin HEAD:main --force || echo "Push failed"
+
+          # At ~5 hours (5*60/2 = 150), trigger new workflow
+          if [ "$i" -eq 149 ]; then
+            echo "Triggering new workflow..."
+            curl -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: token $GH_PAT" \
+              https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/minecraft.yml/dispatches \
+              -d '{"ref":"main"}'
+          fi
+
+          # At 5h 2min, create zip backup in Release
+          if [ "$i" -eq 150 ]; then
+            echo "Creating backup..."
+            ZIP_NAME="minecraft-backup-$(date +'%Y-%m-%d_%H-%M-%S').zip"
+            zip -r $ZIP_NAME world/ plugins/ config/
+            
+            # Create a Release and upload zip
+            RELEASE_RESPONSE=$(curl -s -X POST \
+              -H "Authorization: token $GH_PAT" \
+              -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"backup-$(date +'%Y-%m-%d_%H-%M-%S')\",\"name\":\"$ZIP_NAME\",\"body\":\"Auto backup\",\"draft\":false,\"prerelease\":false}" \
+              https://api.github.com/repos/Mahirminecraft/Ecrions/releases)
+            
+            UPLOAD_URL=$(echo $RELEASE_RESPONSE | jq -r .upload_url | sed -e "s/{?name,label}//")
+            
+            curl -X POST \
+              -H "Authorization: token $GH_PAT" \
+              -H "Content-Type: application/zip" \
+              --data-binary @$ZIP_NAME \
+              "$UPLOAD_URL?name=$ZIP_NAME"
+          fi
         done
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
