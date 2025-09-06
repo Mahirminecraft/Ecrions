@@ -40,15 +40,7 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 6️⃣ Ensure server uses repo files (overwrite any generated files)
-    - name: Use repo files
-      run: |
-        cp -r world/ world/
-        cp -r plugins/ plugins/
-        cp -r config/ config/
-        cp server.properties server.properties
-
-    # 7️⃣ Run server with auto-save, rolling workflow, backup, and stop
+    # 6️⃣ Run server with auto-save, rolling workflow, backup, and stop
     - name: Run Minecraft Server
       run: |
         echo "Server running on Tailscale IP:"
