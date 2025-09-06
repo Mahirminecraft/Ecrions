@@ -1,0 +1,18 @@
+# Minecraft junk files
+logs/
+cache/
+*.log
+*.gz
+*.zip
+*.tmp
+
+# Spark profiler temp
+plugins/spark/tmp-client/
+plugins/spark/tmp-server/
+
+# Crash reports
+crash-reports/
+
+# Session lock files
+*.dat_old
+*.lock
