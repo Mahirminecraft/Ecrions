@@ -44,7 +44,7 @@ jobs:
     # 6. Run server and execute commands (without cd)
     - name: Run Minecraft Server and execute commands
       run: |
-        screen -dmS mc-server java -Xms14G -Xmx14G -jar server/paper.jar nogui
+        screen -dmS mc-server java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui
         sleep 20
         if [ -f commands.txt ]; then
           while read cmd; do
