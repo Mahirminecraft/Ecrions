@@ -39,6 +39,7 @@ jobs:
         if [ ! -f paper-1.21.8-58.jar ]; then
           curl -L -o paper-1.21.8-58.jar \
             https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
+        fi
 
     # 5️⃣ Accept EULA
     - name: Accept EULA
