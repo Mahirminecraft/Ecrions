@@ -1,4 +1,4 @@
-name: Test Ngrok for Minecraft with AuthToken
+name: Test Ngrok for Minecraft
 
 on:
   workflow_dispatch:
@@ -8,70 +8,58 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1️⃣ Checkout repo
-    - name: Checkout repository
+    - name: Checkout repo
       uses: actions/checkout@v3
-      with:
-        persist-credentials: false
 
-    # 2️⃣ Install dependencies
-    - name: Setup environment
+    - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y curl unzip git jq
 
-    # 3️⃣ Download Ngrok if missing
     - name: Download Ngrok
       run: |
         if [ ! -f ngrok ]; then
-          echo "Downloading Ngrok..."
           curl -sLo ngrok.zip https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip
           unzip ngrok.zip
           chmod +x ngrok
         fi
 
-    # 4️⃣ Configure Ngrok with authtoken
-    - name: Set Ngrok Authtoken
-      run: |
-        ./ngrok authtoken 2Y2PeQd39RTZHyF1hPZLfCzZhF8_3xQKMpux5SafksWVrVpw2
+    - name: Configure Ngrok
+      run: ./ngrok authtoken 2Y2PeQd39RTZHyF1hPZLfCzZhF8_3xQKMpux5SafksWVrVpw2
 
-    # 5️⃣ Start Ngrok TCP tunnel and update website
-    - name: Start Ngrok tunnel
+    - name: Start Ngrok TCP Tunnel and Update Website
       run: |
-        # Start Ngrok in background
-        nohup ./ngrok tcp 25565 --log=stdout > ngrok.log 2>&1 &
+        ./ngrok tcp 25565 --region=us --log=stdout > ngrok.log 2>&1 &
         NGROK_PID=$!
-
-        # Wait until Ngrok API is ready
+        echo "Waiting for Ngrok to start..."
+        
         NGROK_URL=""
-        for attempt in {1..20}; do
-          sleep 3
+        for i in {1..20}; do
+          sleep 5
           NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url // empty')
           if [ -n "$NGROK_URL" ]; then
+            echo "Ngrok started!"
             break
           fi
         done
 
         if [ -z "$NGROK_URL" ]; then
-          echo "Failed to get Ngrok public URL!"
-          if ps -p $NGROK_PID > /dev/null; then
-            kill $NGROK_PID
-          fi
+          echo "Ngrok failed to start. Check ngrok.log for details."
+          cat ngrok.log
           exit 1
         fi
 
         echo "Ngrok public TCP URL: $NGROK_URL"
 
-        # Update website file in repo
         echo "<html><body><h1>Minecraft Server IP</h1><p>$NGROK_URL</p></body></html>" > index.html
         git config --global user.name "Ngrok Test Bot"
         git config --global user.email "ngrok-test@github.com"
         git add index.html
-        git commit -m "Update Ngrok test IP: $NGROK_URL" || echo "No changes"
+        git commit -m "Update Ngrok IP: $NGROK_URL" || echo "No changes"
         git push https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git HEAD:main || echo "Push failed"
 
-        # Keep Ngrok running for testing
-        sleep 30
+        # Keep Ngrok alive for 1 minute
+        sleep 60
         if ps -p $NGROK_PID > /dev/null; then
           kill $NGROK_PID
         fi
