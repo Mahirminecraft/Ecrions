@@ -1,0 +1,98 @@
+name: Minecraft Paper Server Rolling
+
+on:
+  workflow_dispatch:
+
+jobs:
+  minecraft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # Max 6h
+
+    steps:
+    # 1️⃣ Checkout repo
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        persist-credentials: false
+
+    # 2️⃣ Setup Java 21
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: temurin
+        java-version: '21'
+
+    # 3️⃣ Ensure Paper jar exists
+    - name: Download Paper 1.21.8 build #58
+      run: |
+        if [ ! -f paper-1.21.8-58.jar ]; then
+          curl -L -o paper-1.21.8-58.jar \
+            https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
+        fi
+
+    # 4️⃣ Accept EULA
+    - name: Accept EULA
+      run: echo "eula=true" > eula.txt
+
+    # 5️⃣ Run server with rolling restart + autosave + backup
+    - name: Run Minecraft Server
+      run: |
+        java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
+        SERVER_PID=$!
+
+        # Configure Git globally
+        git config --global user.name "Auto Save Bot"
+        git config --global user.email "autosave@github.com"
+
+        # Loop: 360 iterations → 6 hours (every 60s)
+        for i in $(seq 1 360); do
+          sleep 60
+          echo "[$i/360] Auto-save at $(date)"
+
+          # Add only important files/folders (player data, worlds, plugins, configs)
+          git add world/ world_nether/ world_the_end/ plugins/ \
+            banned-ips.json banned-players.json ops.json whitelist.json \
+            usercache.json permissions.yml server.properties
+
+          git commit -m "Auto-save at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes"
+          git push origin HEAD:main --force || echo "Push failed"
+
+          # At 5h 1m → trigger new workflow
+          if [ "$i" -eq 301 ]; then
+            echo "Triggering new workflow..."
+            curl -X POST \
+              -H "Authorization: Bearer $GH_PAT" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/mc-server.yml/dispatches \
+              -d '{"ref":"main"}'
+          fi
+
+          # At 5h 2m → backup + stop old server
+          if [ "$i" -eq 302 ]; then
+            echo "Creating backup..."
+            ZIP_NAME="minecraft-backup-$(date +'%Y-%m-%d_%H-%M-%S').zip"
+            zip -r $ZIP_NAME world/ world_nether/ world_the_end/ plugins/ \
+              banned-ips.json banned-players.json ops.json whitelist.json \
+              usercache.json permissions.yml server.properties
+
+            RELEASE_RESPONSE=$(curl -s -X POST \
+              -H "Authorization: token $GH_PAT" \
+              -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"backup-$(date +'%Y-%m-%d_%H-%M-%S')\",\"name\":\"$ZIP_NAME\",\"body\":\"Auto backup\",\"draft\":false,\"prerelease\":false}" \
+              https://api.github.com/repos/Mahirminecraft/Ecrions/releases)
+
+            UPLOAD_URL=$(echo $RELEASE_RESPONSE | jq -r .upload_url | sed -e "s/{?name,label}//")
+
+            curl -X POST \
+              -H "Authorization: token $GH_PAT" \
+              -H "Content-Type: application/zip" \
+              --data-binary @$ZIP_NAME \
+              "$UPLOAD_URL?name=$ZIP_NAME"
+
+            echo "Stopping old workflow..."
+            kill $SERVER_PID
+            exit 0
+          fi
+        done
+      env:
+        GH_PAT: ${{ secrets.GH_PAT }}
