@@ -1,4 +1,4 @@
-name: Test Ngrok for Minecraft
+name: Test Ngrok for Minecraft with AuthToken
 
 on:
   workflow_dispatch:
@@ -30,13 +30,18 @@ jobs:
           chmod +x ngrok
         fi
 
-    # 4️⃣ Start Ngrok TCP tunnel
+    # 4️⃣ Configure Ngrok with authtoken
+    - name: Set Ngrok Authtoken
+      run: |
+        ./ngrok authtoken 2Y2PeQd39RTZHyF1hPZLfCzZhF8_3xQKMpux5SafksWVrVpw2
+
+    # 5️⃣ Start Ngrok TCP tunnel
     - name: Start Ngrok tunnel
       run: |
         ./ngrok tcp 25565 --log=stdout > ngrok.log &
         NGROK_PID=$!
 
-        # Wait for Ngrok to start and fetch public URL
+        # Wait for Ngrok to initialize
         NGROK_URL=""
         for attempt in {1..10}; do
           sleep 3
@@ -54,7 +59,7 @@ jobs:
 
         echo "Ngrok public TCP URL: $NGROK_URL"
 
-        # Write to simple website file
+        # Update website in repo
         echo "<html><body><h1>Minecraft Server IP</h1><p>$NGROK_URL</p></body></html>" > index.html
         git config --global user.name "Ngrok Test Bot"
         git config --global user.email "ngrok-test@github.com"
