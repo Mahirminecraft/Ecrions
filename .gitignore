@@ -1,0 +1,31 @@
+# ---------------------
+# ✅ Keep worlds (player inventories, Nether/End)
+!world/
+!world_nether/
+!world_the_end/
+
+# ✅ Keep plugins and their configs/data
+!plugins/
+
+# ✅ Keep important server/player state files
+!banned-ips.json
+!banned-players.json
+!ops.json
+!whitelist.json
+!usercache.json
+!permissions.yml
+!server.properties
+
+# ---------------------
+# ❌ Ignore junk / non-persistent data
+logs/
+crash-reports/
+*.log
+*.gz
+*.tmp
+*.lck
+*.dat_old
+session.lock
+cache/
+libraries/
+versions/
