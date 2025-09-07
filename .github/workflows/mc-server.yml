@@ -34,7 +34,7 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 5️⃣ Run server with rolling restart + autosave + backup
+    # 5️⃣ Run server with rolling restart + full repo auto-save + backup
     - name: Run Minecraft Server
       run: |
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
@@ -49,11 +49,8 @@ jobs:
           sleep 60
           echo "[$i/360] Auto-save at $(date)"
 
-          # Add only important files/folders (player data, worlds, plugins, configs)
-          git add world/ world_nether/ world_the_end/ plugins/ \
-            banned-ips.json banned-players.json ops.json whitelist.json \
-            usercache.json permissions.yml server.properties
-
+          # --- Commit the whole repo ---
+          git add .
           git commit -m "Auto-save at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
 
@@ -71,9 +68,7 @@ jobs:
           if [ "$i" -eq 302 ]; then
             echo "Creating backup..."
             ZIP_NAME="minecraft-backup-$(date +'%Y-%m-%d_%H-%M-%S').zip"
-            zip -r $ZIP_NAME world/ world_nether/ world_the_end/ plugins/ \
-              banned-ips.json banned-players.json ops.json whitelist.json \
-              usercache.json permissions.yml server.properties
+            zip -r $ZIP_NAME *
 
             RELEASE_RESPONSE=$(curl -s -X POST \
               -H "Authorization: token $GH_PAT" \
