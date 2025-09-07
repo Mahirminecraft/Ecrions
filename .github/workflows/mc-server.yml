@@ -15,14 +15,24 @@ jobs:
       with:
         persist-credentials: false
 
-    # 2️⃣ Setup Java
+    # 2️⃣ Setup Git LFS
+    - name: Install Git LFS
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git-lfs
+        git lfs install
+        git lfs track "Backup/*.zip"
+        git add .gitattributes || true
+        git commit -m "Track backup zips with Git LFS" || echo "Already committed"
+
+    # 3️⃣ Setup Java
     - name: Setup Java 21
       uses: actions/setup-java@v3
       with:
         distribution: temurin
         java-version: '21'
 
-    # 3️⃣ Ensure Paper jar exists
+    # 4️⃣ Ensure Paper jar exists
     - name: Download Paper 1.21.8 build #58
       run: |
         if [ ! -f paper-1.21.8-58.jar ]; then
@@ -30,11 +40,11 @@ jobs:
             https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
         fi
 
-    # 4️⃣ Accept EULA
+    # 5️⃣ Accept EULA
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 5️⃣ Restore latest backup from repo Backup folder
+    # 6️⃣ Restore latest backup from repo Backup folder
     - name: Restore latest backup
       run: |
         mkdir -p Backup
@@ -44,7 +54,7 @@ jobs:
           unzip -o "Backup/$LATEST" -d .
         fi
 
-    # 6️⃣ Run server and rolling backup every 1 minute
+    # 7️⃣ Run server and rolling backup every 1 minute
     - name: Run Minecraft Server with Rolling Backup
       run: |
         # Start server in background
@@ -64,10 +74,10 @@ jobs:
           BACKUP_FILE="Backup/mc-backup-$TIMESTAMP.zip"
           echo "Creating backup $BACKUP_FILE in repo Backup folder"
 
-          # Zip all server files and save in Backup folder
+          # Force zip to include everything and ignore unreadable files
           zip -r -q "$BACKUP_FILE" ./* || echo "Some files were skipped"
 
-          # Commit the backup to repo
+          # Add backup and commit
           git add Backup/
           git commit -m "Backup at $TIMESTAMP" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
