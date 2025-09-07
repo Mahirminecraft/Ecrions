@@ -1,3 +1,4 @@
+
 name: Minecraft Server
 
 on:
@@ -7,13 +8,14 @@ jobs:
   run-server:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo
+      # 1️⃣ Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
           lfs: true
 
-      # ---------------- RESTORE LATEST BACKUP ----------------
+      # 2️⃣ Restore latest backup
       - name: Restore latest backup
         run: |
           mkdir -p Backup
@@ -25,7 +27,7 @@ jobs:
             echo "No backup found, starting fresh world"
           fi
 
-      # ---------------- DOWNLOAD PAPER ----------------
+      # 3️⃣ Download PaperMC if missing
       - name: Download PaperMC
         run: |
           PAPER_JAR="paper.jar"
@@ -36,47 +38,57 @@ jobs:
             curl -L -o $PAPER_JAR "$URL"
           fi
 
+      # 4️⃣ Accept EULA
       - name: Accept EULA
         run: echo "eula=true" > eula.txt
 
-      # ---------------- START SERVER ----------------
-      - name: Start Minecraft Server
+      # 5️⃣ Start Minecraft server
+      - name: Start server
         run: |
-          java -Xmx16G -Xms16G -jar paper.jar nogui &
-          SERVER_PID=$!
-          echo $SERVER_PID > server.pid
+          java -Xmx2G -Xms1G -jar paper.jar nogui &
+          echo $! > server.pid
           sleep 30
           tail -n 50 logs/latest.log || true
 
-      # ---------------- RUN FOR 5h ----------------
-      - name: Keep server running for 5h
-        run: sleep 18000   # 5 hours
+      # 6️⃣ Keep server running for 5 hours
+      - name: Keep server running
+        run: sleep 18000
 
-      # ---------------- STOP SERVER ----------------
+      # 7️⃣ Stop server gracefully
       - name: Stop server
         run: |
           if [ -f server.pid ]; then
-            kill $(cat server.pid) || true
+            kill -15 $(cat server.pid) || true
+            wait $(cat server.pid) 2>/dev/null || true
           fi
 
-      # ---------------- CREATE BACKUP ----------------
-      - name: Create Backup
+      # 8️⃣ Create backup in repo
+      - name: Create backup
         run: |
           mkdir -p Backup
           TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
           ZIPFILE="Backup/mc-backup-$TIMESTAMP.zip"
+          # Zip all files except .git and Backup folder itself
           zip -r "$ZIPFILE" . -x ".git/*" "Backup/*"
+          # Keep only latest 3 backups
+          BACKUPS_TO_DELETE=$(ls -t Backup/*.zip | tail -n +4 || true)
+          if [ -n "$BACKUPS_TO_DELETE" ]; then
+            echo "Deleting old backups:"
+            echo "$BACKUPS_TO_DELETE"
+            rm -f $BACKUPS_TO_DELETE
+          fi
 
-      - name: Push Backup to Repo
+      # 9️⃣ Push backup to repo
+      - name: Push backup
         run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "actions@github.com"
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
           git add Backup/*.zip
-          git commit -m "Backup at $(date +"%Y-%m-%d_%H-%M-%S")" || echo "No changes to commit"
-          git push
+          git commit -m "Backup at $(date +"%Y-%m-%d_%H-%M-%S")" || echo "No changes"
+          git push || true
 
-      # ---------------- TRIGGER NEW WORKFLOW ----------------
-      - name: Trigger new workflow
+      # 🔟 Trigger new workflow
+      - name: Trigger next workflow
         run: |
           curl -X POST \
             -H "Accept: application/vnd.github+json" \
@@ -84,6 +96,8 @@ jobs:
             https://api.github.com/repos/${{ github.repository }}/actions/workflows/mc-server.yml/dispatches \
             -d '{"ref":"main"}'
 
-      # ---------------- SHUTDOWN ----------------
-      - name: Shutdown job
-        run: exit 0
+      # 1️⃣1️⃣ End old workflow safely
+      - name: End workflow
+        run: |
+          echo "Shutting down old workflow..."
+          sleep 180
