@@ -1,4 +1,4 @@
-name: Minecraft Paper Server Rolling Backup
+name: Minecraft Paper Server Rolling Split Backup
 
 on:
   workflow_dispatch:
@@ -20,11 +20,11 @@ jobs:
     - name: Install Git LFS
       run: |
         sudo apt-get update
-        sudo apt-get install -y git-lfs
+        sudo apt-get install -y git-lfs zip unzip
         git lfs install
-        git lfs track "Backup/*.zip"
+        git lfs track "Backup/*.zip*"  # include split parts
         git add .gitattributes || true
-        git commit -m "Track backup zips with Git LFS" || echo "Already committed"
+        git commit -m "Track split backup zips with LFS" || echo "Already committed"
 
     # 3️⃣ Setup Java
     - name: Setup Java 21
@@ -46,51 +46,50 @@ jobs:
       run: echo "eula=true" > eula.txt
 
     # 6️⃣ Restore latest backup from repo Backup folder
-    - name: Restore latest backup
+    - name: Restore latest split backup
       run: |
         mkdir -p Backup
-        LATEST=$(ls Backup | sort -r | head -n1)
-        if [ -f "Backup/$LATEST" ]; then
-          echo "Restoring latest backup: $LATEST"
-          unzip -o "Backup/$LATEST" -d .
+        # find latest backup prefix
+        LATEST_PREFIX=$(ls Backup | grep "mc-backup-" | sed 's/\.zip.*//' | sort -r | head -n1)
+        if [ -n "$LATEST_PREFIX" ]; then
+          echo "Restoring latest backup: $LATEST_PREFIX"
+          # join all parts
+          cat Backup/${LATEST_PREFIX}.zip* > Backup/${LATEST_PREFIX}-full.zip
+          unzip -o Backup/${LATEST_PREFIX}-full.zip -d .
         else
           echo "No backup found, starting fresh server"
         fi
 
-    # 7️⃣ Run server and rolling backup every 1 minute
-    - name: Run Minecraft Server with Rolling Backup
+    # 7️⃣ Run server and rolling split backup every 1 minute
+    - name: Run Minecraft Server with Split Rolling Backup
       run: |
-        # Start server in background
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         SERVER_PID=$!
 
-        # Git config
         git config --global user.name "Auto Backup Bot"
         git config --global user.email "backup@github.com"
         git remote remove origin || true
         git remote add origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
 
-        # Loop every 1 minute (360 iterations = 6 hours)
         for i in $(seq 1 360); do
           sleep 60
           TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
-          BACKUP_FILE="Backup/mc-backup-$TIMESTAMP.zip"
-          echo "Creating backup $BACKUP_FILE"
+          BACKUP_PREFIX="Backup/mc-backup-$TIMESTAMP"
+          echo "Creating split backup $BACKUP_PREFIX"
 
-          # Zip all server files locally
-          zip -r -q "$BACKUP_FILE" ./* -x "logs/*" "*.lock" "*.tmp" || echo "Some files were skipped"
+          # zip only essential server folders, split into 500MB parts
+          zip -r -s 500m "$BACKUP_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
 
-          # Commit and push to repo
+          # commit all parts
           git add Backup/
           git commit -m "Backup at $TIMESTAMP" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
 
-          # Delete local backup to save runner space
-          rm -f "$BACKUP_FILE"
+          # delete local split parts to save space
+          rm -f Backup/mc-backup-$TIMESTAMP.zip* 
 
-          # At 5h1m → trigger new workflow (iteration 301)
+          # trigger new workflow at 5h1m
           if [ "$i" -eq 301 ]; then
-            echo "Triggering new workflow..."
             curl -X POST \
               -H "Authorization: Bearer $GH_PAT" \
               -H "Accept: application/vnd.github+json" \
@@ -98,18 +97,14 @@ jobs:
               -d '{"ref":"main"}'
           fi
 
-          # At 5h2m → final backup + stop server (iteration 302)
+          # final backup + stop at 5h2m
           if [ "$i" -eq 302 ]; then
-            FINAL_BACKUP="Backup/mc-backup-final-$TIMESTAMP.zip"
-            zip -r -q "$FINAL_BACKUP" ./* -x "logs/*" "*.lock" "*.tmp" || echo "Some files were skipped"
-
+            FINAL_PREFIX="Backup/mc-backup-final-$TIMESTAMP"
+            zip -r -s 500m "$FINAL_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
             git add Backup/
             git commit -m "Final backup at $TIMESTAMP" || echo "No changes"
             git push origin HEAD:main --force || echo "Push failed"
-
-            rm -f "$FINAL_BACKUP"  # remove local to save space
-
-            echo "Stopping server..."
+            rm -f Backup/mc-backup-final-$TIMESTAMP.zip*
             kill $SERVER_PID
             exit 0
           fi
