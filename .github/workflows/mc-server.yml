@@ -44,12 +44,16 @@ jobs:
         git config --global user.name "Auto Save Bot"
         git config --global user.email "autosave@github.com"
 
+        # Ensure remote uses GH_PAT for authentication
+        git remote remove origin || true
+        git remote add origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
+
         # Loop: 360 iterations → 6 hours (every 60s)
         for i in $(seq 1 360); do
           sleep 60
           echo "[$i/360] Auto-save at $(date)"
 
-          # --- Commit the whole repo ---
+          # Commit and push the whole repo
           git add .
           git commit -m "Auto-save at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
