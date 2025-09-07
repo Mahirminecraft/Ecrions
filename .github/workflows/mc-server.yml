@@ -1,4 +1,4 @@
-name: Minecraft Paper Server Optimized Backup
+name: Minecraft Paper Server with Safe Backup & Auto Shutdown
 
 on:
   workflow_dispatch:
@@ -16,8 +16,8 @@ jobs:
         persist-credentials: false
         lfs: true
 
-    # 2️⃣ Setup Git LFS
-    - name: Install Git LFS
+    # 2️⃣ Install Git LFS and zip/unzip
+    - name: Setup environment
       run: |
         sudo apt-get update
         sudo apt-get install -y git-lfs zip unzip
@@ -33,7 +33,7 @@ jobs:
         distribution: temurin
         java-version: '21'
 
-    # 4️⃣ Download Paper jar if not exists
+    # 4️⃣ Download Paper jar if missing
     - name: Download Paper 1.21.8 build #58
       run: |
         if [ ! -f paper-1.21.8-58.jar ]; then
@@ -45,7 +45,7 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 6️⃣ Restore latest split backup
+    # 6️⃣ Restore latest backup if exists
     - name: Restore latest backup
       run: |
         mkdir -p Backup
@@ -58,13 +58,12 @@ jobs:
           echo "No backup found, starting fresh server"
         fi
 
-    # 7️⃣ Run server and rolling backup
-    - name: Run Minecraft Server with Split Rolling Backup
+    # 7️⃣ Run server with scheduled stop, backup, and workflow trigger
+    - name: Run Minecraft Server with Scheduled Backup & Auto Shutdown
       run: |
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         SERVER_PID=$!
 
-        # Git config
         git config --global user.name "Auto Backup Bot"
         git config --global user.email "backup@github.com"
         git remote remove origin || true
@@ -73,23 +72,28 @@ jobs:
         for i in $(seq 1 360); do
           sleep 60
           TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
-          BACKUP_PREFIX="Backup/mc-backup-$TIMESTAMP"
-          echo "Creating split backup $BACKUP_PREFIX"
 
-          # Zip essential folders into split parts <=500MB
-          zip -r -s 500m "$BACKUP_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
+          # 5h → stop server
+          if [ "$i" -eq 300 ]; then
+            echo "Stopping Minecraft server at 5h..."
+            kill $SERVER_PID
+          fi
 
-          # Commit and push to repo
-          git add Backup/
-          git commit -m "Backup at $TIMESTAMP" || echo "No changes"
-          git push origin HEAD:main --force || echo "Push failed"
-
-          # Delete local split parts to save runner space
-          rm -f Backup/mc-backup-$TIMESTAMP.zip*
-
-          # Trigger new workflow at 5h1m
+          # 5h1m → create backup
           if [ "$i" -eq 301 ]; then
-            echo "Triggering new workflow..."
+            BACKUP_PREFIX="Backup/mc-backup-$TIMESTAMP"
+            echo "Creating split backup $BACKUP_PREFIX after server stopped"
+
+            zip -r -s 500m "$BACKUP_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
+            git add Backup/
+            git commit -m "Backup at $TIMESTAMP" || echo "No changes"
+            git push origin HEAD:main --force || echo "Push failed"
+            rm -f Backup/mc-backup-$TIMESTAMP.zip*
+          fi
+
+          # 5h2m → trigger new workflow
+          if [ "$i" -eq 302 ]; then
+            echo "Triggering new workflow at 5h2m..."
             curl -X POST \
               -H "Authorization: Bearer $GH_PAT" \
               -H "Accept: application/vnd.github+json" \
@@ -97,19 +101,9 @@ jobs:
               -d '{"ref":"main"}'
           fi
 
-          # Final backup + stop at 5h2m
-          if [ "$i" -eq 302 ]; then
-            FINAL_PREFIX="Backup/mc-backup-final-$TIMESTAMP"
-            zip -r -s 500m "$FINAL_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
-
-            git add Backup/
-            git commit -m "Final backup at $TIMESTAMP" || echo "No changes"
-            git push origin HEAD:main --force || echo "Push failed"
-
-            rm -f Backup/mc-backup-final-$TIMESTAMP.zip*
-
-            echo "Stopping server..."
-            kill $SERVER_PID
+          # 5h3m → exit previous workflow safely
+          if [ "$i" -eq 303 ]; then
+            echo "Previous workflow going offline at 5h3m..."
             exit 0
           fi
         done
