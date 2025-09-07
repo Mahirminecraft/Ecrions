@@ -1,4 +1,4 @@
-name: Minecraft Paper Server Rolling
+name: Minecraft Paper Server Rolling Backup
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # Max 6h
+    timeout-minutes: 360  # 6 hours
 
     steps:
     # 1️⃣ Checkout repo
@@ -15,8 +15,8 @@ jobs:
       with:
         persist-credentials: false
 
-    # 2️⃣ Setup Java 21
-    - name: Setup Java
+    # 2️⃣ Setup Java
+    - name: Setup Java 21
       uses: actions/setup-java@v3
       with:
         distribution: temurin
@@ -34,45 +34,43 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 5️⃣ Run Minecraft server with rolling backup and full repo commit
-    - name: Run Minecraft Server
+    # 5️⃣ Restore latest backup
+    - name: Restore latest backup
+      run: |
+        mkdir -p Backup
+        LATEST=$(ls Backup | sort -r | head -n1)
+        if [ -f "Backup/$LATEST" ]; then
+          echo "Restoring latest backup: $LATEST"
+          unzip -o "Backup/$LATEST" -d .
+        fi
+
+    # 6️⃣ Run server and rolling backup every 1 minute
+    - name: Run Minecraft Server with Rolling Backup
       run: |
         # Start server in background
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         SERVER_PID=$!
 
-        # Configure Git globally
-        git config --global user.name "Auto Save Bot"
-        git config --global user.email "autosave@github.com"
-
-        # Set remote to use GH_PAT for authentication
+        # Git config
+        git config --global user.name "Auto Backup Bot"
+        git config --global user.email "backup@github.com"
         git remote remove origin || true
         git remote add origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
 
-        # Loop: 360 iterations → 6 hours (every 60s)
+        # Loop every 1 minute (360 iterations = 6 hours)
         for i in $(seq 1 360); do
           sleep 60
-          echo "[$i/360] Auto-save at $(date)"
+          TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
+          BACKUP_FILE="Backup/mc-backup-$TIMESTAMP.zip"
+          echo "Creating backup $BACKUP_FILE"
 
-          # --- STOP SERVER BEFORE COMMIT ---
-          if [ $i -eq 1 ]; then
-            # Example: stop server safely for first commit
-            kill $SERVER_PID
-            sleep 10  # wait for server to fully flush chunks
-          fi
+          zip -r "$BACKUP_FILE" ./*
 
-          # Commit and push the full repo (world, Nether, End, player data, plugins, configs)
-          git add .
-          git commit -m "Auto-save at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes"
+          git add Backup/
+          git commit -m "Backup at $TIMESTAMP" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
 
-          # Restart server after first commit if needed
-          if [ $i -eq 1 ]; then
-            java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
-            SERVER_PID=$!
-          fi
-
-          # At 5h1m → trigger new workflow
+          # At 5h1m → trigger new workflow (iteration 301)
           if [ "$i" -eq 301 ]; then
             echo "Triggering new workflow..."
             curl -X POST \
@@ -82,27 +80,17 @@ jobs:
               -d '{"ref":"main"}'
           fi
 
-          # At 5h2m → backup + stop server
+          # At 5h2m → backup + stop server (iteration 302)
           if [ "$i" -eq 302 ]; then
-            echo "Creating backup..."
-            ZIP_NAME="minecraft-backup-$(date +'%Y-%m-%d_%H-%M-%S').zip"
-            zip -r $ZIP_NAME *
+            echo "Final backup before stopping server..."
+            FINAL_BACKUP="Backup/mc-backup-final-$TIMESTAMP.zip"
+            zip -r "$FINAL_BACKUP" ./*
 
-            RELEASE_RESPONSE=$(curl -s -X POST \
-              -H "Authorization: token $GH_PAT" \
-              -H "Content-Type: application/json" \
-              -d "{\"tag_name\":\"backup-$(date +'%Y-%m-%d_%H-%M-%S')\",\"name\":\"$ZIP_NAME\",\"body\":\"Auto backup\",\"draft\":false,\"prerelease\":false}" \
-              https://api.github.com/repos/Mahirminecraft/Ecrions/releases)
+            git add Backup/
+            git commit -m "Final backup at $TIMESTAMP" || echo "No changes"
+            git push origin HEAD:main --force || echo "Push failed"
 
-            UPLOAD_URL=$(echo $RELEASE_RESPONSE | jq -r .upload_url | sed -e "s/{?name,label}//")
-
-            curl -X POST \
-              -H "Authorization: token $GH_PAT" \
-              -H "Content-Type: application/zip" \
-              --data-binary @$ZIP_NAME \
-              "$UPLOAD_URL?name=$ZIP_NAME"
-
-            echo "Stopping old workflow..."
+            echo "Stopping server..."
             kill $SERVER_PID
             exit 0
           fi
