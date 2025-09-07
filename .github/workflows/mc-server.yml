@@ -14,9 +14,9 @@ jobs:
       uses: actions/checkout@v3
       with:
         persist-credentials: false
-        lfs: true  # important to fetch actual backup zips
+        lfs: true
 
-    # 2️⃣ Setup Git LFS (just to ensure)
+    # 2️⃣ Setup Git LFS
     - name: Install Git LFS
       run: |
         sudo apt-get update
@@ -39,7 +39,6 @@ jobs:
         if [ ! -f paper-1.21.8-58.jar ]; then
           curl -L -o paper-1.21.8-58.jar \
             https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
-        fi
 
     # 5️⃣ Accept EULA
     - name: Accept EULA
@@ -75,15 +74,18 @@ jobs:
           sleep 60
           TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
           BACKUP_FILE="Backup/mc-backup-$TIMESTAMP.zip"
-          echo "Creating backup $BACKUP_FILE in repo Backup folder"
+          echo "Creating backup $BACKUP_FILE"
 
-          # Zip all server files, ignore unreadable files
-          zip -r -q "$BACKUP_FILE" ./* || echo "Some files were skipped"
+          # Zip all server files locally
+          zip -r -q "$BACKUP_FILE" ./* -x "logs/*" "*.lock" "*.tmp" || echo "Some files were skipped"
 
-          # Commit backup to repo
+          # Commit and push to repo
           git add Backup/
           git commit -m "Backup at $TIMESTAMP" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
+
+          # Delete local backup to save runner space
+          rm -f "$BACKUP_FILE"
 
           # At 5h1m → trigger new workflow (iteration 301)
           if [ "$i" -eq 301 ]; then
@@ -97,13 +99,14 @@ jobs:
 
           # At 5h2m → final backup + stop server (iteration 302)
           if [ "$i" -eq 302 ]; then
-            echo "Final backup before stopping server..."
             FINAL_BACKUP="Backup/mc-backup-final-$TIMESTAMP.zip"
-            zip -r -q "$FINAL_BACKUP" ./* || echo "Some files were skipped"
+            zip -r -q "$FINAL_BACKUP" ./* -x "logs/*" "*.lock" "*.tmp" || echo "Some files were skipped"
 
             git add Backup/
             git commit -m "Final backup at $TIMESTAMP" || echo "No changes"
             git push origin HEAD:main --force || echo "Push failed"
+
+            rm -f "$FINAL_BACKUP"  # remove local to save space
 
             echo "Stopping server..."
             kill $SERVER_PID
