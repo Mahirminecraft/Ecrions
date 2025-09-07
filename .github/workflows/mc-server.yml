@@ -1,4 +1,4 @@
-name: Minecraft Paper Server Rolling with Ngrok
+name: Minecraft Paper Server with Safe Backup, Auto Shutdown & Ngrok
 
 on:
   workflow_dispatch:
@@ -6,34 +6,46 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # max 6 hours
+    timeout-minutes: 360  # 6 hours
 
     steps:
     # 1️⃣ Checkout repo
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
-        persist-credentials: false  # use GH_PAT for pushes
+        persist-credentials: false
+        lfs: true
 
-    # 2️⃣ Setup Java 21
+    # 2️⃣ Setup environment
+    - name: Setup environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git-lfs zip unzip curl jq
+        git lfs install
+        git lfs track "Backup/*.zip*"
+        git add .gitattributes || true
+        git commit -m "Track split backup zips" || echo "Already committed"
+
+    # 3️⃣ Setup Java 21
     - name: Setup Java
       uses: actions/setup-java@v3
       with:
         distribution: temurin
         java-version: '21'
 
-    # 3️⃣ Download PaperMC if missing
+    # 4️⃣ Download Paper jar if missing
     - name: Download Paper 1.21.8 build #58
       run: |
         if [ ! -f paper-1.21.8-58.jar ]; then
-          curl -L -o paper-1.21.8-58.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
+          curl -L -o paper-1.21.8-58.jar \
+            https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
         fi
 
-    # 4️⃣ Accept EULA
+    # 5️⃣ Accept EULA
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 5️⃣ Download Ngrok if missing
+    # 6️⃣ Download Ngrok if missing
     - name: Download Ngrok
       run: |
         if [ ! -f ngrok ]; then
@@ -43,25 +55,36 @@ jobs:
           chmod +x ngrok
         fi
 
-    # 6️⃣ Start Minecraft server with Ngrok tunnel
-    - name: Run Minecraft Server with Ngrok
+    # 7️⃣ Restore latest backup
+    - name: Restore latest backup
       run: |
-        # Start server in background
-        java -Xms2G -Xmx6G -jar paper-1.21.8-58.jar nogui &
+        mkdir -p Backup
+        LATEST_PREFIX=$(ls Backup | grep "mc-backup-" | sed 's/\.zip.*//' | sort -r | head -n1)
+        if [ -n "$LATEST_PREFIX" ]; then
+          echo "Restoring latest backup: $LATEST_PREFIX"
+          cat Backup/${LATEST_PREFIX}.zip* > Backup/${LATEST_PREFIX}-full.zip
+          unzip -o Backup/${LATEST_PREFIX}-full.zip -d .
+        else
+          echo "No backup found, starting fresh server"
+        fi
+
+    # 8️⃣ Run server with Ngrok, backup, and workflow automation
+    - name: Run Minecraft Server with Ngrok & Scheduled Backup
+      run: |
+        # Start Minecraft server in background
+        java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         SERVER_PID=$!
 
-        # Start Ngrok tunnel for Minecraft port
+        # Start Ngrok tunnel
         ./ngrok tcp 25565 --log=stdout > ngrok.log &
         NGROK_PID=$!
+        sleep 10  # wait for ngrok to start
 
-        echo "Waiting for Ngrok to initialize..."
-        sleep 10
-
-        # Get public Ngrok TCP URL
-        NGROK_URL=$(curl --silent http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+        # Get Ngrok public TCP URL
+        NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
         echo "Ngrok public IP/Port: $NGROK_URL"
 
-        # Update website index.html in repo
+        # Update website file in repo
         echo "<html><body><h1>Minecraft Server IP</h1><p>$NGROK_URL</p></body></html>" > index.html
         git config --global user.name "Ngrok IP Bot"
         git config --global user.email "ngrok@github.com"
@@ -69,35 +92,48 @@ jobs:
         git commit -m "Update server IP: $NGROK_URL" || echo "No changes"
         git push https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git HEAD:main || echo "Push failed"
 
-        # 5h0m → Run server for 5 hours, then stop
-        sleep 18000
+        git config --global user.name "Auto Backup Bot"
+        git config --global user.email "backup@github.com"
+        git remote remove origin || true
+        git remote add origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
 
-        echo "Stopping server and Ngrok..."
-        kill -SIGINT $SERVER_PID || true
-        kill -SIGINT $NGROK_PID || true
-        wait $SERVER_PID 2>/dev/null || true
-        wait $NGROK_PID 2>/dev/null || true
+        for i in $(seq 1 360); do
+          sleep 60
+          TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
-        # 5h1m → Backup
-        TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
-        mkdir -p Backup
-        ZIPFILE="Backup/mc-backup-$TIMESTAMP.zip"
-        zip -r "$ZIPFILE" world world_nether world_the_end plugins config -x ".git/*" "Backup/*"
+          # 5h → stop server
+          if [ "$i" -eq 300 ]; then
+            echo "Stopping Minecraft server at 5h..."
+            kill $SERVER_PID
+            kill $NGROK_PID
+          fi
 
-        # Push backup
-        git add Backup/*.zip
-        git commit -m "Backup at $TIMESTAMP" || echo "No changes"
-        git push https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git HEAD:main || echo "Push failed"
+          # 5h1m → create backup
+          if [ "$i" -eq 301 ]; then
+            BACKUP_PREFIX="Backup/mc-backup-$TIMESTAMP"
+            echo "Creating split backup $BACKUP_PREFIX after server stopped"
+            zip -r -s 500m "$BACKUP_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
+            git add Backup/
+            git commit -m "Backup at $TIMESTAMP" || echo "No changes"
+            git push origin HEAD:main --force || echo "Push failed"
+            rm -f Backup/mc-backup-$TIMESTAMP.zip*
+          fi
 
-        # 5h2m → Trigger new workflow
-        curl -X POST \
-          -H "Authorization: Bearer $GH_PAT" \
-          -H "Accept: application/vnd.github+json" \
-          https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/mc-server.yml/dispatches \
-          -d '{"ref":"main"}'
+          # 5h2m → trigger new workflow
+          if [ "$i" -eq 302 ]; then
+            echo "Triggering new workflow at 5h2m..."
+            curl -X POST \
+              -H "Authorization: Bearer $GH_PAT" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/mc-server.yml/dispatches \
+              -d '{"ref":"main"}'
+          fi
 
-        # 5h3m → Exit current workflow
-        echo "Workflow completed."
-        exit 0
+          # 5h3m → exit previous workflow safely
+          if [ "$i" -eq 303 ]; then
+            echo "Previous workflow going offline at 5h3m..."
+            exit 0
+          fi
+        done
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
