@@ -64,8 +64,10 @@ jobs:
           BACKUP_FILE="Backup/mc-backup-$TIMESTAMP.zip"
           echo "Creating backup $BACKUP_FILE"
 
-          zip -r "$BACKUP_FILE" ./*
+          # Force zip to include everything and ignore unreadable files
+          zip -r -q "$BACKUP_FILE" ./* || echo "Some files were skipped"
 
+          # Commit backup folder
           git add Backup/
           git commit -m "Backup at $TIMESTAMP" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
@@ -80,11 +82,11 @@ jobs:
               -d '{"ref":"main"}'
           fi
 
-          # At 5h2m → backup + stop server (iteration 302)
+          # At 5h2m → final backup + stop server (iteration 302)
           if [ "$i" -eq 302 ]; then
             echo "Final backup before stopping server..."
             FINAL_BACKUP="Backup/mc-backup-final-$TIMESTAMP.zip"
-            zip -r "$FINAL_BACKUP" ./*
+            zip -r -q "$FINAL_BACKUP" ./* || echo "Some files were skipped"
 
             git add Backup/
             git commit -m "Final backup at $TIMESTAMP" || echo "No changes"
