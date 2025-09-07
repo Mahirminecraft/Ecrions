@@ -4,142 +4,86 @@ on:
   workflow_dispatch:
 
 jobs:
-  run:
+  run-server:
     runs-on: ubuntu-latest
-    timeout-minutes: 310 # 5h10m runtime
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          lfs: true
 
-      # Restore latest backup if exists
+      # ---------------- RESTORE LATEST BACKUP ----------------
       - name: Restore latest backup
         run: |
           mkdir -p Backup
           LATEST_BACKUP=$(ls -t Backup/*.zip 2>/dev/null | head -n 1 || true)
           if [ -n "$LATEST_BACKUP" ]; then
             echo "Restoring backup: $LATEST_BACKUP"
-            unzip -o "$LATEST_BACKUP" -d .
+            unzip -o "$LATEST_BACKUP" -d ./
           else
-            echo "No backup found, starting fresh world."
+            echo "No backup found, starting fresh world"
           fi
 
-      # Download ngrok
-      - name: Download ngrok
+      # ---------------- DOWNLOAD PAPER ----------------
+      - name: Download PaperMC
         run: |
-          wget https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -O ngrok.tgz
-          tar -xvzf ngrok.tgz
-          chmod +x ngrok
-          mv ngrok /usr/local/bin/ngrok
-
-      # Download PaperMC if not exists
-      - name: Setup Minecraft server
-        run: |
-          if [ ! -f paper.jar ]; then
-            wget -O paper.jar https://api.papermc.io/v2/projects/paper/versions/1.21.1/builds/100/downloads/paper-1.21.1-100.jar
+          PAPER_JAR="paper.jar"
+          if [ ! -f $PAPER_JAR ]; then
+            VERSION=1.21.1
+            BUILD=$(curl -s https://api.papermc.io/v2/projects/paper/versions/$VERSION | jq -r '.builds[-1]')
+            URL="https://api.papermc.io/v2/projects/paper/versions/$VERSION/builds/$BUILD/downloads/paper-$VERSION-$BUILD.jar"
+            curl -L -o $PAPER_JAR "$URL"
           fi
 
-      # Start Minecraft server
-      - name: Start Minecraft server
+      - name: Accept EULA
+        run: echo "eula=true" > eula.txt
+
+      # ---------------- START SERVER ----------------
+      - name: Start Minecraft Server
         run: |
-          java -Xmx2G -Xms1G -jar paper.jar nogui &
-          echo $! > server.pid
+          java -Xmx16G -Xms16G -jar paper.jar nogui &
+          SERVER_PID=$!
+          echo $SERVER_PID > server.pid
           sleep 30
+          tail -n 50 logs/latest.log || true
 
-      # Start ngrok tunnel
-      - name: Start ngrok tunnel
-        run: |
-          nohup ngrok tcp 25565 --log=stdout > ngrok.log 2>&1 &
-          sleep 10
-          curl http://127.0.0.1:4040/api/tunnels > tunnels.json
-          NGROK_URL=$(jq -r '.tunnels[0].public_url' tunnels.json)
-          echo "NGROK_URL=${NGROK_URL}" >> $GITHUB_ENV
-          echo "Server public URL: $NGROK_URL"
+      # ---------------- RUN FOR 5h ----------------
+      - name: Keep server running for 5h
+        run: sleep 18000   # 5 hours
 
-      # Update GitHub Pages site with new IP
-      - name: Update GitHub Pages site
-        run: |
-          mkdir -p docs
-          echo "<html><head><title>Minecraft Server</title></head><body>" > docs/index.html
-          echo "<h1>Current Server Address</h1>" >> docs/index.html
-          echo "<p id='ip'>${NGROK_URL}</p>" >> docs/index.html
-          echo "<p>(This updates every 5 hours)</p>" >> docs/index.html
-          echo "</body></html>" >> docs/index.html
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add docs/index.html
-          git commit -m "Update server IP at $(date)" || echo "No changes"
-          git push
-
-      # Keep server running ~5h
-      - name: Keep server running
-        run: |
-          echo "Server running... waiting 5h"
-          sleep 18000 # 5 hours
-
-      # Stop server gracefully
+      # ---------------- STOP SERVER ----------------
       - name: Stop server
         run: |
           if [ -f server.pid ]; then
-            kill -15 $(cat server.pid) || true
-            sleep 60
+            kill $(cat server.pid) || true
           fi
 
-      # Create shutdown backup in repo + cleanup old ones
-      - name: Backup world to repo
+      # ---------------- CREATE BACKUP ----------------
+      - name: Create Backup
         run: |
           mkdir -p Backup
-          ZIP_NAME="Backup/mc-backup-$(date +%Y-%m-%d_%H-%M-%S).zip"
-          zip -r "$ZIP_NAME" world world_nether world_the_end || true
-          git add "$ZIP_NAME"
+          TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
+          ZIPFILE="Backup/mc-backup-$TIMESTAMP.zip"
+          zip -r "$ZIPFILE" . -x ".git/*" "Backup/*"
 
-          # Cleanup old backups (keep only last 3)
-          BACKUPS_TO_DELETE=$(ls -t Backup/*.zip 2>/dev/null | tail -n +4 || true)
-          if [ -n "$BACKUPS_TO_DELETE" ]; then
-            echo "Deleting old backups:"
-            echo "$BACKUPS_TO_DELETE"
-            rm -f $BACKUPS_TO_DELETE
-            git rm -f $BACKUPS_TO_DELETE || true
-          fi
-
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git commit -m "Backup at $(date)" || echo "No changes"
-          git push || true
-
-      # Upload shutdown backup as GitHub Release asset
-      - name: Upload release backup
+      - name: Push Backup to Repo
         run: |
-          RELEASE_NAME="backup-$(date +%Y-%m-%d_%H-%M-%S)"
-          ZIP_NAME=$(ls -t Backup/*.zip | head -n 1)
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add Backup/*.zip
+          git commit -m "Backup at $(date +"%Y-%m-%d_%H-%M-%S")" || echo "No changes to commit"
+          git push
 
-          echo "Creating release $RELEASE_NAME with asset $ZIP_NAME"
-
-          RESPONSE=$(curl -s -X POST \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"$RELEASE_NAME\",\"name\":\"$RELEASE_NAME\",\"body\":\"Automatic backup at shutdown\"}" \
-            https://api.github.com/repos/${{ github.repository }}/releases)
-
-          UPLOAD_URL=$(echo "$RESPONSE" | jq -r .upload_url | sed -e "s/{?name,label}//")
-
-          curl -s -X POST \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Content-Type: application/zip" \
-            --data-binary @"$ZIP_NAME" \
-            "$UPLOAD_URL?name=$(basename $ZIP_NAME)"
-
-      # Trigger next workflow
-      - name: Trigger restart workflow
+      # ---------------- TRIGGER NEW WORKFLOW ----------------
+      - name: Trigger new workflow
         run: |
           curl -X POST \
             -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Authorization: Bearer ${{ secrets.GH_PAT }}" \
             https://api.github.com/repos/${{ github.repository }}/actions/workflows/mc-server.yml/dispatches \
             -d '{"ref":"main"}'
 
-      # End workflow safely after 5h3m
-      - name: End workflow
-        run: |
-          echo "Shutting down old workflow..."
-          sleep 180
+      # ---------------- SHUTDOWN ----------------
+      - name: Shutdown job
+        run: exit 0
