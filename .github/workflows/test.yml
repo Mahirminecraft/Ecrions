@@ -13,7 +13,7 @@ jobs:
     - name: Run container
       run: docker-compose up -d 
     
-    - uses: luisboto/ngrok-tunnel-action@<VERSION>
+    - uses: luisboto/ngrok-tunnel-action@v1
       with:
         timeout: 1h
         port: 25565
