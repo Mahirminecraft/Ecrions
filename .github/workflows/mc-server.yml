@@ -9,13 +9,14 @@ jobs:
     timeout-minutes: 360  # 6 hours
 
     steps:
-    # 1️⃣ Checkout repo
+    # 1️⃣ Checkout repo with LFS
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
         persist-credentials: false
+        lfs: true  # important to fetch actual backup zips
 
-    # 2️⃣ Setup Git LFS
+    # 2️⃣ Setup Git LFS (just to ensure)
     - name: Install Git LFS
       run: |
         sudo apt-get update
@@ -52,6 +53,8 @@ jobs:
         if [ -f "Backup/$LATEST" ]; then
           echo "Restoring latest backup: $LATEST"
           unzip -o "Backup/$LATEST" -d .
+        else
+          echo "No backup found, starting fresh server"
         fi
 
     # 7️⃣ Run server and rolling backup every 1 minute
@@ -74,10 +77,10 @@ jobs:
           BACKUP_FILE="Backup/mc-backup-$TIMESTAMP.zip"
           echo "Creating backup $BACKUP_FILE in repo Backup folder"
 
-          # Force zip to include everything and ignore unreadable files
+          # Zip all server files, ignore unreadable files
           zip -r -q "$BACKUP_FILE" ./* || echo "Some files were skipped"
 
-          # Add backup and commit
+          # Commit backup to repo
           git add Backup/
           git commit -m "Backup at $TIMESTAMP" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
