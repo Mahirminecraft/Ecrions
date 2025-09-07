@@ -56,7 +56,7 @@ jobs:
           git push origin HEAD:main --force || echo "Push failed"
 
           # At 5h 59m → trigger new workflow
-          if [ "$i" -eq 717 ]; then
+          if [ "$i" -eq 1 ]; then
             echo "Triggering new workflow..."
             curl -X POST \
               -H "Authorization: Bearer $GH_PAT" \
@@ -66,7 +66,7 @@ jobs:
           fi
 
           # At 6h → backup + stop old server
-          if [ "$i" -eq 720 ]; then
+          if [ "$i" -eq 2 ]; then
             echo "Creating backup..."
             ZIP_NAME="minecraft-backup-$(date +'%Y-%m-%d_%H-%M-%S').zip"
             zip -r $ZIP_NAME world/ plugins/ config/
