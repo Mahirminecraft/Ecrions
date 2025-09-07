@@ -1,0 +1,69 @@
+name: Test Ngrok for Minecraft
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ngrok-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1️⃣ Checkout repo
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        persist-credentials: false
+
+    # 2️⃣ Install dependencies
+    - name: Setup environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y curl unzip git jq
+
+    # 3️⃣ Download Ngrok if missing
+    - name: Download Ngrok
+      run: |
+        if [ ! -f ngrok ]; then
+          echo "Downloading Ngrok..."
+          curl -sLo ngrok.zip https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip
+          unzip ngrok.zip
+          chmod +x ngrok
+        fi
+
+    # 4️⃣ Start Ngrok TCP tunnel
+    - name: Start Ngrok tunnel
+      run: |
+        ./ngrok tcp 25565 --log=stdout > ngrok.log &
+        NGROK_PID=$!
+
+        # Wait for Ngrok to start and fetch public URL
+        NGROK_URL=""
+        for attempt in {1..10}; do
+          sleep 3
+          NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url // empty')
+          if [ -n "$NGROK_URL" ]; then
+            break
+          fi
+        done
+
+        if [ -z "$NGROK_URL" ]; then
+          echo "Failed to get Ngrok public URL!"
+          kill $NGROK_PID
+          exit 1
+        fi
+
+        echo "Ngrok public TCP URL: $NGROK_URL"
+
+        # Write to simple website file
+        echo "<html><body><h1>Minecraft Server IP</h1><p>$NGROK_URL</p></body></html>" > index.html
+        git config --global user.name "Ngrok Test Bot"
+        git config --global user.email "ngrok-test@github.com"
+        git add index.html
+        git commit -m "Update Ngrok test IP: $NGROK_URL" || echo "No changes"
+        git push https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git HEAD:main || echo "Push failed"
+
+        # Keep Ngrok running for a few seconds for test
+        sleep 30
+        kill $NGROK_PID
+      env:
+        GH_PAT: ${{ secrets.GH_PAT }}
