@@ -34,7 +34,7 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 5️⃣ Restore latest backup
+    # 5️⃣ Restore latest backup from repo Backup folder
     - name: Restore latest backup
       run: |
         mkdir -p Backup
@@ -62,12 +62,12 @@ jobs:
           sleep 60
           TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
           BACKUP_FILE="Backup/mc-backup-$TIMESTAMP.zip"
-          echo "Creating backup $BACKUP_FILE"
+          echo "Creating backup $BACKUP_FILE in repo Backup folder"
 
-          # Force zip to include everything and ignore unreadable files
+          # Zip all server files and save in Backup folder
           zip -r -q "$BACKUP_FILE" ./* || echo "Some files were skipped"
 
-          # Commit backup folder
+          # Commit the backup to repo
           git add Backup/
           git commit -m "Backup at $TIMESTAMP" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
