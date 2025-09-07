@@ -1,97 +1,66 @@
-name: Minecraft Paper Server Full Repo Run
+name: Minecraft Paper Server Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  minecraft:
+  run-server:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # max 6 hours
-
     steps:
-    # 1️⃣ Checkout repo (all files/folders you listed will come from repo)
-    - name: Checkout repository
-      uses: actions/checkout@v3
-      with:
-        persist-credentials: false
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GH_PAT }}
+          fetch-depth: 0
 
-    # 2️⃣ Setup Java 21
-    - name: Setup Java
-      uses: actions/setup-java@v3
-      with:
-        distribution: temurin
-        java-version: '21'
+      - name: Set up JDK 21
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: 21
 
-    # 3️⃣ Ensure Paper jar exists (skip download if already in repo)
-    - name: Ensure Paper jar
-      run: |
-        if [ ! -f paper-1.21.8-58.jar ]; then
-          curl -L -o paper-1.21.8-58.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
-        fi
-
-    # 4️⃣ Accept EULA (overwrite if needed)
-    - name: Accept EULA
-      run: echo "eula=true" > eula.txt
-
-    # 5️⃣ Start server using ALL repo files
-    - name: Run Minecraft Server
-      run: |
-        echo "Starting server using all repo files..."
-        java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
-
-        # Loop: auto-save every 2 minutes
-        for i in {1..150}; do
-          sleep 120
-          echo "Auto-save ($i/150)"
-
-          # Git config
-          git config --global user.name "Auto Save Bot"
-          git config --global user.email "autosave@github.com"
-          git remote remove origin || true
-          git remote add origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
-
-          # Add all files/folders from repo explicitly
-          git add whitelist.json version_history.json usercache.json spigot.yml server.properties permissions.yml paper-1.21.8-58.jar ops.json help.yml eula.txt commands.yml bukkit.yml banned-players.json banned-ips.json world world_nether world_the_end versions plugins libraries config
-
-          # Commit & push
-          git commit -m "Auto-save at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes to commit"
-          git push origin HEAD:main --force || echo "Push failed"
-
-          # 5h 1min → trigger new workflow
-          if [ "$i" -eq 149 ]; then
-            echo "Triggering new workflow..."
-            curl -X POST \
-              -H "Accept: application/vnd.github+json" \
-              -H "Authorization: token $GH_PAT" \
-              https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/minecraft.yml/dispatches \
-              -d '{"ref":"main"}'
+      - name: Ensure server files exist
+        run: |
+          mkdir -p server
+          cp -r * server/ || true
+          cd server
+          if [ ! -f paper-1.21.8-58.jar ]; then
+            wget -O paper-1.21.8-58.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
           fi
+          echo "eula=true" > eula.txt
 
-          # 5h 2min → backup + stop
-          if [ "$i" -eq 150 ]; then
-            echo "Creating backup..."
-            ZIP_NAME="minecraft-backup-$(date +'%Y-%m-%d_%H-%M-%S').zip"
-            zip -r $ZIP_NAME whitelist.json version_history.json usercache.json spigot.yml server.properties permissions.yml paper-1.21.8-58.jar ops.json help.yml eula.txt commands.yml bukkit.yml banned-players.json banned-ips.json world world_nether world_the_end versions plugins libraries config
+      - name: Run server loop (test mode)
+        run: |
+          cd server
+          for i in {1..3}; do
+            echo "⏳ Loop $i / 3"
+            screen -dmS mc-server java -Xms2G -Xmx2G -jar paper-1.21.8-58.jar nogui
+            sleep 60
+            screen -S mc-server -X quit || true
 
-            # Create a Release and upload zip
-            RELEASE_RESPONSE=$(curl -s -X POST \
-              -H "Authorization: token $GH_PAT" \
-              -H "Content-Type: application/json" \
-              -d "{\"tag_name\":\"backup-$(date +'%Y-%m-%d_%H-%M-%S')\",\"name\":\"$ZIP_NAME\",\"body\":\"Auto backup\",\"draft\":false,\"prerelease\":false}" \
-              https://api.github.com/repos/Mahirminecraft/Ecrions/releases)
-            
-            UPLOAD_URL=$(echo $RELEASE_RESPONSE | jq -r .upload_url | sed -e "s/{?name,label}//")
+            # Commit changes back to repo every min
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .
+            git commit -m "Auto-save (minute $i)" || true
+            git push origin main || true
 
-            curl -X POST \
-              -H "Authorization: token $GH_PAT" \
-              -H "Content-Type: application/zip" \
-              --data-binary @$ZIP_NAME \
-              "$UPLOAD_URL?name=$ZIP_NAME"
+            # At 2nd min → trigger new workflow
+            if [ $i -eq 2 ]; then
+              echo "⚡ Triggering new workflow..."
+              curl -X POST \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${{ secrets.GH_PAT }}" \
+                https://api.github.com/repos/${{ github.repository }}/actions/workflows/mc-server-test.yml/dispatches \
+                -d '{"ref":"main"}'
+            fi
 
-            echo "Stopping old workflow..."
-            pkill -f "paper-1.21.8-58.jar"  # stop Minecraft server
-            exit 0
-          fi
-        done
-      env:
-        GH_PAT: ${{ secrets.GH_PAT }}
+            # At 3rd min → backup + exit
+            if [ $i -eq 3 ]; then
+              echo "📦 Creating release backup..."
+              zip -r server-backup.zip .
+              gh release create "backup-$(date +%Y%m%d-%H%M%S)" server-backup.zip --repo ${{ github.repository }} || true
+              echo "🛑 Stopping old workflow"
+              exit 0
+            fi
+          done
