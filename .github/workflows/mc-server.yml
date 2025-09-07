@@ -6,6 +6,7 @@ on:
 jobs:
   run-server:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -61,10 +62,13 @@ jobs:
             if [ $i -eq 3 ]; then
               echo "📦 Creating release backup..."
               zip -r server-backup.zip .
-              gh release create "backup-$(date +%Y%m%d-%H%M%S)" server-backup.zip --repo ${{ github.repository }} || true
+              gh release create "backup-$(date +%Y%m%d-%H%M%S)" server-backup.zip --repo ${{ github.repository }} \
+                --title "Backup $(date +%Y%m%d-%H%M%S)" \
+                --notes "Automated backup"
               echo "🛑 Stopping old workflow"
               exit 0
             fi
           done
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }} # For gh CLI authentication
