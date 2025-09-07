@@ -35,15 +35,16 @@ jobs:
       run: |
         ./ngrok authtoken 2Y2PeQd39RTZHyF1hPZLfCzZhF8_3xQKMpux5SafksWVrVpw2
 
-    # 5️⃣ Start Ngrok TCP tunnel
+    # 5️⃣ Start Ngrok TCP tunnel and update website
     - name: Start Ngrok tunnel
       run: |
-        ./ngrok tcp 25565 --log=stdout > ngrok.log &
+        # Start Ngrok in background
+        nohup ./ngrok tcp 25565 --log=stdout > ngrok.log 2>&1 &
         NGROK_PID=$!
 
-        # Wait for Ngrok to initialize
+        # Wait until Ngrok API is ready
         NGROK_URL=""
-        for attempt in {1..10}; do
+        for attempt in {1..20}; do
           sleep 3
           NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url // empty')
           if [ -n "$NGROK_URL" ]; then
@@ -53,13 +54,15 @@ jobs:
 
         if [ -z "$NGROK_URL" ]; then
           echo "Failed to get Ngrok public URL!"
-          kill $NGROK_PID
+          if ps -p $NGROK_PID > /dev/null; then
+            kill $NGROK_PID
+          fi
           exit 1
         fi
 
         echo "Ngrok public TCP URL: $NGROK_URL"
 
-        # Update website in repo
+        # Update website file in repo
         echo "<html><body><h1>Minecraft Server IP</h1><p>$NGROK_URL</p></body></html>" > index.html
         git config --global user.name "Ngrok Test Bot"
         git config --global user.email "ngrok-test@github.com"
@@ -67,8 +70,10 @@ jobs:
         git commit -m "Update Ngrok test IP: $NGROK_URL" || echo "No changes"
         git push https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git HEAD:main || echo "Push failed"
 
-        # Keep Ngrok running for a few seconds for test
+        # Keep Ngrok running for testing
         sleep 30
-        kill $NGROK_PID
+        if ps -p $NGROK_PID > /dev/null; then
+          kill $NGROK_PID
+        fi
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
