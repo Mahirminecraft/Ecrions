@@ -1,4 +1,4 @@
-name: Minecraft Paper Server with Safe Backup & Auto Shutdown
+name: Minecraft Paper Server with Safe Backup
 
 on:
   workflow_dispatch:
@@ -12,8 +12,10 @@ jobs:
     # 1️⃣ Checkout repo
     - name: Checkout repository
       uses: actions/checkout@v3
+      with:
+        persist-credentials: false
 
-    # 2️⃣ Install necessary packages
+    # 2️⃣ Setup environment
     - name: Setup environment
       run: |
         sudo apt-get update
@@ -38,7 +40,7 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 6️⃣ Restore latest backup (split zip)
+    # 6️⃣ Restore latest backup if exists
     - name: Restore latest backup
       run: |
         mkdir -p Backup
@@ -50,16 +52,16 @@ jobs:
           echo "No backup found, starting fresh server"
         fi
 
-    # 7️⃣ Run server with scheduled stop, backup & workflow trigger
-    - name: Run Minecraft Server with Backup & Auto Shutdown
+    # 7️⃣ Run server with scheduled stop & backup
+    - name: Run Minecraft Server with Scheduled Backup
       run: |
+        # Start Minecraft server in background
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         SERVER_PID=$!
 
+        # Configure Git
         git config --global user.name "Auto Backup Bot"
         git config --global user.email "backup@github.com"
-
-        # Make sure origin is set
         git remote remove origin || true
         git remote add origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
 
@@ -67,30 +69,40 @@ jobs:
           sleep 60
           TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
-          # 5h → stop server & create backup
+          # 5h → stop server
           if [ "$i" -eq 300 ]; then
             echo "Stopping Minecraft server at 5h..."
             kill $SERVER_PID
-            wait $SERVER_PID || true
+          fi
 
-            echo "Creating split backup at 5h..."
+          # 5h1m → create backup
+          if [ "$i" -eq 301 ]; then
+            echo "Creating split backup $TIMESTAMP"
+
             mkdir -p Backup
             BACKUP_PREFIX="Backup/mc-backup-$TIMESTAMP"
             zip -r -s 500m "$BACKUP_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
 
-            # Keep only 5 latest backups in Backup folder
-            cd Backup
-            ls -1dt mc-backup-* | tail -n +21 | xargs -r rm -f
-            cd ..
-
+            # Push to repo (only latest 5 backups)
             git add Backup/
             git commit -m "Backup at $TIMESTAMP" || echo "No changes"
             git push origin HEAD:main --force || echo "Push failed"
+
+            # Delete old backups if more than 5
+            BACKUPS_COUNT=$(ls Backup | grep "mc-backup-" | wc -l)
+            if [ "$BACKUPS_COUNT" -gt 20 ]; then  # 5 backups × 4 parts = 20 files
+              OLD_BACKUPS=$(ls Backup | grep "mc-backup-" | sort | head -n $(($BACKUPS_COUNT-20)))
+              for f in $OLD_BACKUPS; do
+                rm -f Backup/$f
+              done
+            fi
+
+            echo "Backup completed"
           fi
 
-          # 5h1m → trigger new workflow
-          if [ "$i" -eq 301 ]; then
-            echo "Triggering new workflow at 5h1m..."
+          # 5h2m → trigger new workflow
+          if [ "$i" -eq 302 ]; then
+            echo "Triggering new workflow..."
             curl -X POST \
               -H "Authorization: Bearer $GH_PAT" \
               -H "Accept: application/vnd.github+json" \
@@ -98,9 +110,9 @@ jobs:
               -d '{"ref":"main"}'
           fi
 
-          # 5h2m → exit current workflow
-          if [ "$i" -eq 302 ]; then
-            echo "Previous workflow going offline at 5h2m..."
+          # 5h3m → safely exit old workflow
+          if [ "$i" -eq 303 ]; then
+            echo "Previous workflow going offline..."
             exit 0
           fi
         done
