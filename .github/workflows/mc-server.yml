@@ -6,7 +6,7 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # max 6 hours
+    timeout-minutes: 360  # 6 hours
 
     steps:
     # 1️⃣ Checkout repository
@@ -14,18 +14,15 @@ jobs:
       uses: actions/checkout@v3
       with:
         persist-credentials: false
-        lfs: true
 
     # 2️⃣ Setup environment
     - name: Setup environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y git-lfs zip unzip curl jq
-        git lfs install
-        mkdir -p Backup
+        sudo apt-get install -y zip unzip curl jq
 
-    # 3️⃣ Setup Java
-    - name: Setup Java 21
+    # 3️⃣ Setup Java 21
+    - name: Setup Java
       uses: actions/setup-java@v3
       with:
         distribution: temurin
@@ -36,27 +33,27 @@ jobs:
       run: |
         if [ ! -f paper-1.21.8-58.jar ]; then
           curl -L -o paper-1.21.8-58.jar \
-            https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
+          https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
         fi
 
     # 5️⃣ Accept EULA
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 6️⃣ Restore latest backup
+    # 6️⃣ Restore latest backup (split zip) if exists
     - name: Restore latest backup
       run: |
+        mkdir -p Backup
         LATEST_PREFIX=$(ls Backup 2>/dev/null | grep "mc-backup-" | sed 's/\.zip.*//' | sort -r | head -n1)
         if [ -n "$LATEST_PREFIX" ]; then
           echo "Restoring latest backup: $LATEST_PREFIX"
-          zip -s 0 Backup/${LATEST_PREFIX}.zip --out Backup/${LATEST_PREFIX}-full.zip
+          cat Backup/${LATEST_PREFIX}.zip* > Backup/${LATEST_PREFIX}-full.zip
           unzip -o Backup/${LATEST_PREFIX}-full.zip -d .
         else
           echo "No backup found, starting fresh server"
-        fi
 
-    # 7️⃣ Run server with backup & workflow automation
-    - name: Run Minecraft Server with Backup & Auto Shutdown
+    # 7️⃣ Run Minecraft server with scheduled backup & workflow automation
+    - name: Run Minecraft Server with Auto Backup
       run: |
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         SERVER_PID=$!
@@ -70,33 +67,29 @@ jobs:
           sleep 60
           TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
-          # Every 30 min → auto backup (split zip 500MB)
-          if (( i % 30 == 0 )); then
-            BACKUP_PREFIX="Backup/mc-backup-$TIMESTAMP"
-            echo "Creating split backup $BACKUP_PREFIX..."
-            zip -r -s 500m "$BACKUP_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
-
-            # Keep only latest 5 backups in Backup folder
-            BACKUP_COUNT=$(ls Backup/mc-backup-* -1 2>/dev/null | grep -o 'mc-backup-' | wc -l)
-            if (( BACKUP_COUNT > 20 )); then
-              echo "Removing oldest backup parts..."
-              ls -t Backup/mc-backup-* | tail -n +21 | xargs rm -f
-            fi
-
-            git add Backup/
-            git commit -m "Auto backup at $TIMESTAMP" || echo "No changes"
-            git push origin HEAD:main --force || echo "Push failed"
-          fi
-
-          # 5h → stop server and create final backup for release
-          if [ "$i" -eq 1 ]; then
+          # 5h → stop server
+          if [ "$i" -eq 300 ]; then
             echo "Stopping Minecraft server at 5h..."
             kill $SERVER_PID
+          fi
+
+          # 5h1m → create split backup and push to repo
+          if [ "$i" -eq 1 ]; then
             BACKUP_PREFIX="Backup/mc-backup-$TIMESTAMP"
-            echo "Creating final split backup $BACKUP_PREFIX..."
+            echo "Creating split backup $BACKUP_PREFIX after server stopped"
             zip -r -s 500m "$BACKUP_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
 
-            # Upload to Release
+            # Keep only latest 5 backups in repo
+            BACKUPS_TO_DELETE=$(ls Backup | grep "mc-backup-" | sort -r | tail -n +6)
+            for file in $BACKUPS_TO_DELETE; do
+              rm -f "Backup/$file"
+            done
+
+            git add Backup/
+            git commit -m "Backup at $TIMESTAMP" || echo "No changes"
+            git push origin HEAD:main --force || echo "Push failed"
+
+            # Also upload final backup to Release
             RELEASE_RESPONSE=$(curl -s -X POST \
               -H "Authorization: token $GH_PAT" \
               -H "Content-Type: application/json" \
@@ -104,18 +97,16 @@ jobs:
               https://api.github.com/repos/Mahirminecraft/Ecrions/releases)
 
             UPLOAD_URL=$(echo $RELEASE_RESPONSE | jq -r .upload_url | sed -e "s/{?name,label}//")
-            for f in Backup/${BACKUP_PREFIX}.zip*; do
-              curl -X POST \
-                -H "Authorization: token $GH_PAT" \
-                -H "Content-Type: application/zip" \
-                --data-binary @$f \
-                "$UPLOAD_URL?name=$(basename $f)"
-            done
+            curl -X POST \
+              -H "Authorization: token $GH_PAT" \
+              -H "Content-Type: application/zip" \
+              --data-binary @$BACKUP_PREFIX.zip \
+              "$UPLOAD_URL?name=$BACKUP_PREFIX.zip"
           fi
 
-          # 5h1m → trigger new workflow
+          # 5h2m → trigger new workflow
           if [ "$i" -eq 2 ]; then
-            echo "Triggering new workflow at 5h1m..."
+            echo "Triggering new workflow..."
             curl -X POST \
               -H "Authorization: Bearer $GH_PAT" \
               -H "Accept: application/vnd.github+json" \
@@ -123,9 +114,9 @@ jobs:
               -d '{"ref":"main"}'
           fi
 
-          # 5h2m → safely exit old workflow
+          # 5h3m → safely exit current workflow
           if [ "$i" -eq 3 ]; then
-            echo "Exiting old workflow at 5h2m..."
+            echo "Exiting previous workflow safely..."
             exit 0
           fi
         done
