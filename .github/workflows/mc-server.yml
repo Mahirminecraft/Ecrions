@@ -1,4 +1,4 @@
-name: Minecraft Paper Server Rolling - Test Mode
+name: Minecraft Paper Server Rolling Test Mode
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 10  # enough for short test
+    timeout-minutes: 15  # Enough for testing loop
 
     steps:
     # 1️⃣ Checkout repo
@@ -33,78 +33,59 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 5️⃣ Wait 5 seconds before starting server (optional)
+    # 5️⃣ Wait before starting server
     - name: Wait before starting server
       run: sleep 5
 
-    # 6️⃣ Run Minecraft Server with Backups (Testing)
-    - name: Run Minecraft Server - Test Mode
+    # 6️⃣ Run Minecraft Server with Test Backups and Controller Logic
+    - name: Run Minecraft Server with Test Backups
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
       run: |
         mkdir -p Backup
 
-        # Keep only latest 2 backup cycles (8 files)
-        BACKUPS=$(ls -1tr Backup | grep 'backup' | sort)
-        COUNT=$(echo "$BACKUPS" | wc -l)
-        if [ $COUNT -gt 8 ]; then
-          TO_DELETE=$(echo "$BACKUPS" | head -n $(($COUNT - 8)))
-          echo "Deleting old backup files:"
-          echo "$TO_DELETE"
-          echo "$TO_DELETE" | xargs -I {} rm -f Backup/{}
-        fi
+        # Git config
+        git config --global user.name "Auto Save Bot"
+        git config --global user.email "autosave@github.com"
+        git remote set-url origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
 
         # Start Minecraft server in background
         java -Xms1G -Xmx1G -jar paper-1.21.8-58.jar nogui &
 
-        # Backup loop: every 30 seconds, 2 cycles for testing
-        for i in {1..2}; do
-          sleep 30  # 30-second interval
+        # Backup loop: every 1 minute for 3 cycles
+        for i in {1..3}; do
+          sleep 60  # 1 minute
 
-          # Create 4 incremental backups
-          for PART in {1..4}; do
-            ZIP_NAME="Backup/${PART}-backup-$(date +'%Y-%m-%d_%H-%M-%S').zip"
-            zip -r $ZIP_NAME world/ plugins/ config/
-          done
+          # Create backup
+          ZIP_NAME="Backup/test-backup-$(date +'%Y-%m-%d_%H-%M-%S').zip"
+          zip -r $ZIP_NAME world/ plugins/ config/
 
-          # Remove old incremental files beyond 2 cycles (latest 8 files)
-          BACKUPS=$(ls -1tr Backup | grep 'backup' | sort)
+          # Keep only latest 2 backups
+          BACKUPS=$(ls -1tr Backup | grep 'test-backup' | sort)
           COUNT=$(echo "$BACKUPS" | wc -l)
-          if [ $COUNT -gt 8 ]; then
-            TO_DELETE=$(echo "$BACKUPS" | head -n $(($COUNT - 8)))
+          if [ $COUNT -gt 2 ]; then
+            TO_DELETE=$(echo "$BACKUPS" | head -n $(($COUNT - 2)))
             echo "Deleting old backup files:"
             echo "$TO_DELETE"
             echo "$TO_DELETE" | xargs -I {} rm -f Backup/{}
           fi
 
-          # Commit and push incremental backups
-          git config --global user.name "Auto Save Bot"
-          git config --global user.email "autosave@github.com"
+          # Commit and push backup
           git add Backup/
-          git commit -m "Backup at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes"
+          git commit -m "Test backup at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
+
+          # Optional: trigger workflow again (for testing auto-relaunch)
+          echo "Triggering workflow again..."
+          curl -X POST \
+            -H "Authorization: Bearer $GH_PAT" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/mc-server.yml/dispatches \
+            -d '{"ref":"main"}'
         done
 
-        # 1 min: Stop server and create final backup
-        echo "1 minute reached, stopping server..."
-        FINAL_ZIP="minecraft-backup-final-$(date +'%Y-%m-%d_%H-%M-%S').zip"
-        zip -r $FINAL_ZIP world/ plugins/ config/
+        # Stop server after test
+        echo "Test complete, stopping server..."
         pkill -f "paper-1.21.8-58.jar"
 
-        # Push final backup to repo
-        git add $FINAL_ZIP
-        git commit -m "Final backup at $(date +"%Y-%m-%d_%H-%M-%S")" || echo "No changes"
-        git push origin HEAD:main --force || echo "Push failed"
-
-        # 2 min: Trigger new workflow
-        echo "Triggering new workflow..."
-        curl -X POST \
-          -H "Authorization: Bearer $GH_PAT" \
-          -H "Accept: application/vnd.github+json" \
-          https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/mc-server.yml/dispatches \
-          -d '{"ref":"main"}'
-
-        # 3 min: Exit workflow
-        echo "Waiting 1 minute before exiting workflow..."
-        sleep 60
-        echo "Exiting test workflow."
+        echo "Test workflow finished."
