@@ -1,4 +1,4 @@
-name: Minecraft Paper Server with Safe Backup, Auto Shutdown & Ngrok
+name: Minecraft Paper Server with Rolling Backups
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 360  # 6 hours
 
     steps:
-    # 1️⃣ Checkout repo
+    # 1️⃣ Checkout repo with LFS
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
@@ -22,12 +22,9 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y git-lfs zip unzip curl jq
         git lfs install
-        git lfs track "Backup/*.zip*"
-        git add .gitattributes || true
-        git commit -m "Track split backup zips" || echo "Already committed"
 
-    # 3️⃣ Setup Java 21
-    - name: Setup Java
+    # 3️⃣ Setup Java
+    - name: Setup Java 21
       uses: actions/setup-java@v3
       with:
         distribution: temurin
@@ -45,54 +42,26 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 6️⃣ Download Ngrok if missing
-    - name: Download Ngrok
-      run: |
-        if [ ! -f ngrok ]; then
-          echo "Downloading Ngrok..."
-          curl -sLo ngrok.zip https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip
-          unzip ngrok.zip
-          chmod +x ngrok
-        fi
-
-    # 7️⃣ Restore latest backup
+    # 6️⃣ Restore latest backup if exists
     - name: Restore latest backup
       run: |
         mkdir -p Backup
         LATEST_PREFIX=$(ls Backup | grep "mc-backup-" | sed 's/\.zip.*//' | sort -r | head -n1)
         if [ -n "$LATEST_PREFIX" ]; then
-          echo "Restoring latest backup: $LATEST_PREFIX"
+          echo "Restoring backup: $LATEST_PREFIX"
           cat Backup/${LATEST_PREFIX}.zip* > Backup/${LATEST_PREFIX}-full.zip
           unzip -o Backup/${LATEST_PREFIX}-full.zip -d .
         else
           echo "No backup found, starting fresh server"
         fi
 
-    # 8️⃣ Run server with Ngrok, backup, and workflow automation
-    - name: Run Minecraft Server with Ngrok & Scheduled Backup
+    # 7️⃣ Run server + scheduled backups + shutdown workflow
+    - name: Run Minecraft Server with Backups
       run: |
-        # Start Minecraft server in background
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         SERVER_PID=$!
 
-        # Start Ngrok tunnel
-        ./ngrok tcp 25565 --log=stdout > ngrok.log &
-        NGROK_PID=$!
-        sleep 10  # wait for ngrok to start
-
-        # Get Ngrok public TCP URL
-        NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-        echo "Ngrok public IP/Port: $NGROK_URL"
-
-        # Update website file in repo
-        echo "<html><body><h1>Minecraft Server IP</h1><p>$NGROK_URL</p></body></html>" > index.html
-        git config --global user.name "Ngrok IP Bot"
-        git config --global user.email "ngrok@github.com"
-        git add index.html
-        git commit -m "Update server IP: $NGROK_URL" || echo "No changes"
-        git push https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git HEAD:main || echo "Push failed"
-
-        git config --global user.name "Auto Backup Bot"
+        git config --global user.name "Backup Bot"
         git config --global user.email "backup@github.com"
         git remote remove origin || true
         git remote add origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
@@ -101,27 +70,75 @@ jobs:
           sleep 60
           TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
-          # 5h → stop server
-          if [ "$i" -eq 300 ]; then
-            echo "Stopping Minecraft server at 5h..."
-            kill $SERVER_PID
-            kill $NGROK_PID
-          fi
+          # Every 30 min → rolling backup
+          if [ $((i % 30)) -eq 0 ]; then
+            BACKUP_PREFIX="mc-backup-$TIMESTAMP"
+            echo "Creating rolling backup: $BACKUP_PREFIX"
+            mkdir -p Backup
+            zip -r -s 500m Backup/$BACKUP_PREFIX.zip world/ world_nether/ world_the_end/ plugins/ config/ || true
 
-          # 5h1m → create backup
-          if [ "$i" -eq 301 ]; then
-            BACKUP_PREFIX="Backup/mc-backup-$TIMESTAMP"
-            echo "Creating split backup $BACKUP_PREFIX after server stopped"
-            zip -r -s 500m "$BACKUP_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
+            # Keep only 5 latest backups (20 files max)
+            cd Backup
+            ls -t | grep "mc-backup-" | sed -e '1,20d' | xargs -r rm -f
+            cd ..
+
             git add Backup/
-            git commit -m "Backup at $TIMESTAMP" || echo "No changes"
+            git commit -m "Rolling backup at $TIMESTAMP" || echo "No changes"
             git push origin HEAD:main --force || echo "Push failed"
-            rm -f Backup/mc-backup-$TIMESTAMP.zip*
+
+            # Also upload to Release
+            RELEASE=$(curl -s -X POST \
+              -H "Authorization: token $GH_PAT" \
+              -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"backup-$TIMESTAMP\",\"name\":\"$BACKUP_PREFIX\",\"body\":\"Auto backup $TIMESTAMP\"}" \
+              https://api.github.com/repos/Mahirminecraft/Ecrions/releases)
+            UPLOAD_URL=$(echo $RELEASE | jq -r .upload_url | sed "s/{?name,label}//")
+            for FILE in Backup/$BACKUP_PREFIX.zip*; do
+              curl -s -X POST \
+                -H "Authorization: token $GH_PAT" \
+                -H "Content-Type: application/zip" \
+                --data-binary @$FILE \
+                "$UPLOAD_URL?name=$(basename $FILE)"
+            done
           fi
 
-          # 5h2m → trigger new workflow
-          if [ "$i" -eq 302 ]; then
-            echo "Triggering new workflow at 5h2m..."
+          # 5h → final backup + stop server
+          if [ "$i" -eq 300 ]; then
+            echo "Final backup at 5h before shutdown..."
+            BACKUP_PREFIX="mc-backup-$TIMESTAMP"
+            zip -r -s 500m Backup/$BACKUP_PREFIX.zip world/ world_nether/ world_the_end/ plugins/ config/ || true
+
+            # Keep only 5 latest
+            cd Backup
+            ls -t | grep "mc-backup-" | sed -e '1,20d' | xargs -r rm -f
+            cd ..
+
+            git add Backup/
+            git commit -m "Final backup at $TIMESTAMP" || echo "No changes"
+            git push origin HEAD:main --force || echo "Push failed"
+
+            # Release upload
+            RELEASE=$(curl -s -X POST \
+              -H "Authorization: token $GH_PAT" \
+              -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"backup-$TIMESTAMP\",\"name\":\"$BACKUP_PREFIX\",\"body\":\"Final backup at $TIMESTAMP\"}" \
+              https://api.github.com/repos/Mahirminecraft/Ecrions/releases)
+            UPLOAD_URL=$(echo $RELEASE | jq -r .upload_url | sed "s/{?name,label}//")
+            for FILE in Backup/$BACKUP_PREFIX.zip*; do
+              curl -s -X POST \
+                -H "Authorization: token $GH_PAT" \
+                -H "Content-Type: application/zip" \
+                --data-binary @$FILE \
+                "$UPLOAD_URL?name=$(basename $FILE)"
+            done
+
+            echo "Stopping Minecraft server..."
+            kill $SERVER_PID
+          fi
+
+          # 5h1m → trigger new workflow
+          if [ "$i" -eq 301 ]; then
+            echo "Triggering new workflow..."
             curl -X POST \
               -H "Authorization: Bearer $GH_PAT" \
               -H "Accept: application/vnd.github+json" \
@@ -129,9 +146,9 @@ jobs:
               -d '{"ref":"main"}'
           fi
 
-          # 5h3m → exit previous workflow safely
-          if [ "$i" -eq 303 ]; then
-            echo "Previous workflow going offline at 5h3m..."
+          # 5h2m → exit old workflow
+          if [ "$i" -eq 302 ]; then
+            echo "Exiting old workflow at 5h2m"
             exit 0
           fi
         done
