@@ -56,6 +56,14 @@ jobs:
     - name: Wait before starting server
       run: sleep 10
 
+    # 6️⃣a Update No-IP Dynamic DNS
+    - name: Update No-IP Dynamic DNS
+      run: |
+        SERVER_IP=$(curl -s https://api.ipify.org)
+        echo "Public IP: $SERVER_IP"
+        curl -u "${{ secrets.NOIP_USERNAME }}:${{ secrets.NOIP_PASSWORD }}" \
+        "https://dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$SERVER_IP"
+
     # 7️⃣ Run Minecraft server with backups
     - name: Run Minecraft Server with Backups and Controller Logic
       env:
@@ -100,29 +108,3 @@ jobs:
           git commit -m "Backup cycle $i" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
         done
-
-        # 5h: Stop server and create final 4 backups
-        echo "Stopping server for final backup..."
-        pkill -f "paper-1.21.8-58.jar"
-
-        for PART in {1..4}; do
-          FINAL_ZIP="Backup/Backup${PART}.zip"
-          zip -r $FINAL_ZIP world/ plugins/ config/
-        done
-
-        git add Backup/Backup*.zip
-        git commit -m "Final 4 backups at 5 hours" || echo "No changes"
-        git push origin HEAD:main --force || echo "Push failed"
-
-        # 5h 1m: Trigger new workflow
-        echo "Triggering new workflow..."
-        curl -X POST \
-          -H "Authorization: Bearer $GH_PAT" \
-          -H "Accept: application/vnd.github+json" \
-          https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/mc-server.yml/dispatches \
-          -d '{"ref":"main"}'
-
-        # 5h 2m: Exit workflow
-        echo "Waiting 1 minute before exiting workflow..."
-        sleep 60
-        echo "Exiting controller workflow."
