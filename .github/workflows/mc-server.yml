@@ -50,12 +50,12 @@ jobs:
           echo "No latest backups found. Will create new backups."
         fi
 
-    # 6️⃣ Wait before starting server
+    # 6️⃣ Wait a few seconds before starting server
     - name: Wait before starting server
       run: sleep 5
 
-    # 7️⃣ Run Minecraft server with test backups
-    - name: Run Minecraft Server with Backups and Controller Logic
+    # 7️⃣ Run Minecraft server with fast test backups
+    - name: Run Minecraft Server with Test Backups
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
       run: |
@@ -69,46 +69,59 @@ jobs:
         # Start Minecraft server in background
         java -Xms2G -Xmx2G -jar paper-1.21.8-58.jar nogui &
 
-        # Backup loop: every 1 minute for 3 cycles (test)
-        for i in {1..3}; do
-          sleep 60  # 1 minute
+        # Backup loop: every 15 seconds for test (2 cycles)
+        for i in {1..2}; do
+          sleep 15
 
-          # Step 1: Delete previous backups
+          # Delete previous backups
           for PART in {1..4}; do
             if [ -f "Backup/${PART}.Backup-previous.zip" ]; then
               rm -f "Backup/${PART}.Backup-previous.zip"
             fi
           done
 
-          # Step 2: Rename current latest backups to previous
+          # Rename latest to previous
           for PART in {1..4}; do
             if [ -f "Backup/${PART}.Backup-latest.zip" ]; then
               mv "Backup/${PART}.Backup-latest.zip" "Backup/${PART}.Backup-previous.zip"
             fi
           done
 
-          # Step 3: Create 4 new latest backups
+          # Create new latest backups (skip locked files)
           for PART in {1..4}; do
             ZIP_NAME="Backup/${PART}.Backup-latest.zip"
-            zip -r $ZIP_NAME world/ plugins/ config/
+            zip -r $ZIP_NAME world/ plugins/ config/ || echo "Skipped some files, continuing..."
           done
 
-          # Commit and push backups to repo
+          # Commit and push
           git add Backup/
           git commit -m "Test backup cycle $i" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
         done
 
-        # Final test backup (creates 4 Backup#.zip files)
-        echo "Test final backup..."
+        # 30s: Stop server and create final 4 backups
+        echo "Stopping server for final backup..."
         pkill -f "paper-1.21.8-58.jar"
+
         for PART in {1..4}; do
           FINAL_ZIP="Backup/Backup${PART}.zip"
           zip -r $FINAL_ZIP world/ plugins/ config/
         done
 
         git add Backup/Backup*.zip
-        git commit -m "Test final 4 backups" || echo "No changes"
+        git commit -m "Final 4 backups (Test Mode)" || echo "No changes"
         git push origin HEAD:main --force || echo "Push failed"
 
+        # 45s: Trigger new workflow
+        echo "Triggering new workflow..."
+        sleep 15
+        curl -X POST \
+          -H "Authorization: Bearer $GH_PAT" \
+          -H "Accept: application/vnd.github+json" \
+          https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/mc-server.yml/dispatches \
+          -d '{"ref":"main"}'
+
+        # 60s: Exit workflow
+        echo "Stopping workflow..."
+        sleep 15
         echo "Test workflow complete."
