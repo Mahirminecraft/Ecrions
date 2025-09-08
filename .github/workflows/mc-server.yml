@@ -6,23 +6,21 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours
+    timeout-minutes: 360  # 6 hours max
 
     steps:
     # 1️⃣ Checkout repo
     - name: Checkout repository
       uses: actions/checkout@v3
-      with:
-        persist-credentials: false
 
-    # 2️⃣ Setup environment
+    # 2️⃣ Install necessary packages
     - name: Setup environment
       run: |
         sudo apt-get update
         sudo apt-get install -y zip unzip curl jq
 
-    # 3️⃣ Setup Java 21
-    - name: Setup Java
+    # 3️⃣ Setup Java
+    - name: Setup Java 21
       uses: actions/setup-java@v3
       with:
         distribution: temurin
@@ -33,34 +31,35 @@ jobs:
       run: |
         if [ ! -f paper-1.21.8-58.jar ]; then
           curl -L -o paper-1.21.8-58.jar \
-          https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
+            https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
         fi
 
     # 5️⃣ Accept EULA
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 6️⃣ Restore latest backup if exists
+    # 6️⃣ Restore latest backup (split zip)
     - name: Restore latest backup
       run: |
         mkdir -p Backup
         LATEST_PREFIX=$(ls Backup 2>/dev/null | grep "mc-backup-" | sed 's/\.zip.*//' | sort -r | head -n1)
         if [ -n "$LATEST_PREFIX" ]; then
           echo "Restoring latest backup: $LATEST_PREFIX"
-          cat Backup/${LATEST_PREFIX}.zip* > Backup/${LATEST_PREFIX}-full.zip
-          unzip -o Backup/${LATEST_PREFIX}-full.zip -d .
+          unzip -o Backup/${LATEST_PREFIX}.zip -d .
         else
           echo "No backup found, starting fresh server"
         fi
 
-    # 7️⃣ Run Minecraft server with scheduled backup & workflow automation
-    - name: Run Minecraft Server
+    # 7️⃣ Run server with scheduled stop, backup & workflow trigger
+    - name: Run Minecraft Server with Backup & Auto Shutdown
       run: |
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         SERVER_PID=$!
 
         git config --global user.name "Auto Backup Bot"
         git config --global user.email "backup@github.com"
+
+        # Make sure origin is set
         git remote remove origin || true
         git remote add origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
 
@@ -68,56 +67,40 @@ jobs:
           sleep 60
           TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
-          # 5h → stop server
+          # 5h → stop server & create backup
           if [ "$i" -eq 300 ]; then
             echo "Stopping Minecraft server at 5h..."
             kill $SERVER_PID
-          fi
+            wait $SERVER_PID || true
 
-          # 5h1m → create split backup and push to repo
-          if [ "$i" -eq 1 ]; then
+            echo "Creating split backup at 5h..."
+            mkdir -p Backup
             BACKUP_PREFIX="Backup/mc-backup-$TIMESTAMP"
-            echo "Creating split backup $BACKUP_PREFIX after server stopped"
             zip -r -s 500m "$BACKUP_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
 
-            # Keep only latest 5 backups
-            BACKUPS_TO_DELETE=$(ls Backup | grep "mc-backup-" | sort -r | tail -n +6)
-            for file in $BACKUPS_TO_DELETE; do
-              rm -f "Backup/$file"
-            done
+            # Keep only 5 latest backups in Backup folder
+            cd Backup
+            ls -1dt mc-backup-* | tail -n +21 | xargs -r rm -f
+            cd ..
 
             git add Backup/
             git commit -m "Backup at $TIMESTAMP" || echo "No changes"
             git push origin HEAD:main --force || echo "Push failed"
-
-            # Upload final backup to Release
-            RELEASE_RESPONSE=$(curl -s -X POST \
-              -H "Authorization: token $GH_PAT" \
-              -H "Content-Type: application/json" \
-              -d "{\"tag_name\":\"backup-$TIMESTAMP\",\"name\":\"$BACKUP_PREFIX.zip\",\"body\":\"Auto backup\",\"draft\":false,\"prerelease\":false}" \
-              https://api.github.com/repos/Mahirminecraft/Ecrions/releases)
-
-            UPLOAD_URL=$(echo $RELEASE_RESPONSE | jq -r .upload_url | sed -e "s/{?name,label}//")
-            curl -X POST \
-              -H "Authorization: token $GH_PAT" \
-              -H "Content-Type: application/zip" \
-              --data-binary @$BACKUP_PREFIX.zip \
-              "$UPLOAD_URL?name=$BACKUP_PREFIX.zip"
           fi
 
-          # 5h2m → trigger new workflow
-          if [ "$i" -eq 2 ]; then
-            echo "Triggering new workflow..."
+          # 5h1m → trigger new workflow
+          if [ "$i" -eq 301 ]; then
+            echo "Triggering new workflow at 5h1m..."
             curl -X POST \
               -H "Authorization: Bearer $GH_PAT" \
               -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/mc-server.yml/dispatches \
+              https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/restart.yml/dispatches \
               -d '{"ref":"main"}'
           fi
 
-          # 5h3m → safely exit current workflow
-          if [ "$i" -eq 3 ]; then
-            echo "Exiting previous workflow safely..."
+          # 5h2m → exit current workflow
+          if [ "$i" -eq 302 ]; then
+            echo "Previous workflow going offline at 5h2m..."
             exit 0
           fi
         done
