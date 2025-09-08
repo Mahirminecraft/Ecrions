@@ -1,4 +1,4 @@
-name: Minecraft Paper Server Rolling with Controller
+name: Minecraft Paper Server Rolling with Controller (Test Mode)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # max 6 hours
+    timeout-minutes: 10  # short for test
 
     steps:
     # 1️⃣ Checkout repo
@@ -50,11 +50,11 @@ jobs:
           echo "No latest backups found. Will create new backups."
         fi
 
-    # 6️⃣ Wait a few seconds before starting server
+    # 6️⃣ Wait before starting server
     - name: Wait before starting server
-      run: sleep 10
+      run: sleep 5
 
-    # 7️⃣ Run Minecraft server with backups
+    # 7️⃣ Run Minecraft server with test backups
     - name: Run Minecraft Server with Backups and Controller Logic
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
@@ -67,11 +67,11 @@ jobs:
         git remote set-url origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
 
         # Start Minecraft server in background
-        java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
+        java -Xms2G -Xmx2G -jar paper-1.21.8-58.jar nogui &
 
-        # Backup loop: every 30 minutes for 5 hours (10 cycles)
-        for i in {1..10}; do
-          sleep 1800  # 30 minutes
+        # Backup loop: every 1 minute for 3 cycles (test)
+        for i in {1..3}; do
+          sleep 60  # 1 minute
 
           # Step 1: Delete previous backups
           for PART in {1..4}; do
@@ -95,34 +95,20 @@ jobs:
 
           # Commit and push backups to repo
           git add Backup/
-          git commit -m "Backup cycle $i" || echo "No changes"
+          git commit -m "Test backup cycle $i" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
         done
 
-        # 5h: Stop server and create final 4 backups
-        echo "5 hours reached, stopping server..."
+        # Final test backup (creates 4 Backup#.zip files)
+        echo "Test final backup..."
         pkill -f "paper-1.21.8-58.jar"
-
-        # Create final 4 backups with simple names
         for PART in {1..4}; do
           FINAL_ZIP="Backup/Backup${PART}.zip"
           zip -r $FINAL_ZIP world/ plugins/ config/
         done
 
-        # Push final backups to repo
         git add Backup/Backup*.zip
-        git commit -m "Final 4 backups at 5 hours" || echo "No changes"
+        git commit -m "Test final 4 backups" || echo "No changes"
         git push origin HEAD:main --force || echo "Push failed"
 
-        # Trigger new workflow
-        echo "Triggering new workflow..."
-        curl -X POST \
-          -H "Authorization: Bearer $GH_PAT" \
-          -H "Accept: application/vnd.github+json" \
-          https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/mc-server.yml/dispatches \
-          -d '{"ref":"main"}'
-
-        # Exit workflow after 2 minutes
-        echo "Waiting 2 minutes before exiting workflow..."
-        sleep 120
-        echo "Exiting controller workflow."
+        echo "Test workflow complete."
