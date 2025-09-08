@@ -1,4 +1,4 @@
-name: Minecraft Paper Server with Safe Backup & Auto Shutdown
+name: Minecraft Paper Server Rolling (No LFS)
 
 on:
   workflow_dispatch:
@@ -9,22 +9,20 @@ jobs:
     timeout-minutes: 360  # 6 hours
 
     steps:
-    # 1️⃣ Checkout repo with LFS
+    # 1️⃣ Checkout repo
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
         persist-credentials: false
-        lfs: true
 
-    # 2️⃣ Setup environment
+    # 2️⃣ Install zip/unzip/curl/jq
     - name: Setup environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y git-lfs zip unzip curl jq
-        git lfs install
+        sudo apt-get install -y zip unzip curl jq
 
-    # 3️⃣ Setup Java
-    - name: Setup Java 21
+    # 3️⃣ Setup Java 21
+    - name: Setup Java
       uses: actions/setup-java@v3
       with:
         distribution: temurin
@@ -55,28 +53,64 @@ jobs:
           echo "No backup found, starting fresh server"
         fi
 
-    # 7️⃣ Run Minecraft Server with Scheduled Backup & Workflow Trigger
-    - name: Run Minecraft Server
-      env:
-        GH_TOKEN: ${{ secrets.GH_PAT }}
+    # 7️⃣ Run server with scheduled backup and workflow automation
+    - name: Run Minecraft Server with Auto Backup & Workflow Restart
       run: |
-        java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
+        java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
         SERVER_PID=$!
 
         git config --global user.name "Auto Backup Bot"
         git config --global user.email "backup@github.com"
+        git remote remove origin || true
+        git remote add origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
 
         for i in $(seq 1 360); do
           sleep 60
           TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
           # 5h → stop server
-          if [ "$i" -eq 1 ]; then
+          if [ "$i" -eq 300 ]; then
             echo "Stopping Minecraft server at 5h..."
             kill $SERVER_PID
           fi
 
-          # 5h1m → trigger new workflow using GH CLI
+          # 5h1m → create backup
+          if [ "$i" -eq 1 ]; then
+            BACKUP_PREFIX="Backup/mc-backup-$TIMESTAMP"
+            echo "Creating split backup $BACKUP_PREFIX after server stopped"
+            
+            mkdir -p Backup
+            zip -r -s 500m "$BACKUP_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
+            
+            # Add backup to repo
+            git add Backup/
+            git commit -m "Backup at $TIMESTAMP" || echo "No changes"
+            git push origin HEAD:main --force || echo "Push failed"
+
+            # Delete old backups (keep latest 5)
+            BACKUPS_TO_DELETE=$(ls Backup | grep "mc-backup-" | sort | head -n -5)
+            for f in $BACKUPS_TO_DELETE; do
+              rm -f Backup/$f
+              git rm -f Backup/$f
+            done
+            git commit -m "Cleanup old backups" || echo "No old backups"
+            git push origin HEAD:main --force || echo "Push failed"
+
+            # Also create release for this backup
+            RELEASE_RESPONSE=$(curl -s -X POST \
+              -H "Authorization: token $GH_PAT" \
+              -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"backup-$TIMESTAMP\",\"name\":\"$BACKUP_PREFIX.zip\",\"body\":\"Auto backup\",\"draft\":false,\"prerelease\":false}" \
+              https://api.github.com/repos/Mahirminecraft/Ecrions/releases)
+            UPLOAD_URL=$(echo $RELEASE_RESPONSE | jq -r .upload_url | sed -e "s/{?name,label}//")
+            curl -X POST \
+              -H "Authorization: token $GH_PAT" \
+              -H "Content-Type: application/zip" \
+              --data-binary @$BACKUP_PREFIX.zip \
+              "$UPLOAD_URL?name=$BACKUP_PREFIX.zip"
+          fi
+
+          # 5h2m → trigger new workflow
           if [ "$i" -eq 2 ]; then
             echo "Triggering new workflow..."
           curl -X POST \
@@ -86,9 +120,11 @@ jobs:
             -d '{"ref":"main"}'
           fi
 
-          # 5h2m → exit previous workflow safely
+          # 5h3m → exit previous workflow safely
           if [ "$i" -eq 3 ]; then
-            echo "Exiting old workflow at 5h2m..."
+            echo "Previous workflow going offline at 5h3m..."
             exit 0
           fi
         done
+      env:
+        GH_PAT: ${{ secrets.GH_PAT }}
