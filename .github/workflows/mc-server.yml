@@ -1,4 +1,4 @@
-name: Minecraft Paper Server with Safe Backup
+name: Minecraft Paper Server Rolling - Test Mode
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours max
+    timeout-minutes: 10  # enough for short test
 
     steps:
     # 1️⃣ Checkout repo
@@ -15,106 +15,96 @@ jobs:
       with:
         persist-credentials: false
 
-    # 2️⃣ Setup environment
-    - name: Setup environment
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y zip unzip curl jq
-
-    # 3️⃣ Setup Java
-    - name: Setup Java 21
+    # 2️⃣ Setup Java 21
+    - name: Setup Java
       uses: actions/setup-java@v3
       with:
         distribution: temurin
         java-version: '21'
 
-    # 4️⃣ Download Paper jar if missing
+    # 3️⃣ Ensure Paper jar exists
     - name: Download Paper 1.21.8 build #58
       run: |
         if [ ! -f paper-1.21.8-58.jar ]; then
-          curl -L -o paper-1.21.8-58.jar \
-            https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
+          curl -L -o paper-1.21.8-58.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
         fi
 
-    # 5️⃣ Accept EULA
+    # 4️⃣ Accept EULA
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 6️⃣ Restore latest backup if exists
-    - name: Restore latest backup
-      run: |
-        mkdir -p Backup
-        LATEST_PREFIX=$(ls Backup 2>/dev/null | grep "mc-backup-" | sed 's/\.zip.*//' | sort -r | head -n1)
-        if [ -n "$LATEST_PREFIX" ]; then
-          echo "Restoring latest backup: $LATEST_PREFIX"
-          unzip -o Backup/${LATEST_PREFIX}.zip -d .
-        else
-          echo "No backup found, starting fresh server"
-        fi
+    # 5️⃣ Wait 5 seconds before starting server (optional)
+    - name: Wait before starting server
+      run: sleep 5
 
-    # 7️⃣ Run server with scheduled stop & backup
-    - name: Run Minecraft Server with Scheduled Backup
-      run: |
-        # Start Minecraft server in background
-        java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
-        SERVER_PID=$!
-
-        # Configure Git
-        git config --global user.name "Auto Backup Bot"
-        git config --global user.email "backup@github.com"
-        git remote remove origin || true
-        git remote add origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
-
-        for i in $(seq 1 360); do
-          sleep 60
-          TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
-
-          # 5h → stop server
-          if [ "$i" -eq 300 ]; then
-            echo "Stopping Minecraft server at 5h..."
-            kill $SERVER_PID
-          fi
-
-          # 5h1m → create backup
-          if [ "$i" -eq 301 ]; then
-            echo "Creating split backup $TIMESTAMP"
-
-            mkdir -p Backup
-            BACKUP_PREFIX="Backup/mc-backup-$TIMESTAMP"
-            zip -r -s 500m "$BACKUP_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
-
-            # Push to repo (only latest 5 backups)
-            git add Backup/
-            git commit -m "Backup at $TIMESTAMP" || echo "No changes"
-            git push origin HEAD:main --force || echo "Push failed"
-
-            # Delete old backups if more than 5
-            BACKUPS_COUNT=$(ls Backup | grep "mc-backup-" | wc -l)
-            if [ "$BACKUPS_COUNT" -gt 20 ]; then  # 5 backups × 4 parts = 20 files
-              OLD_BACKUPS=$(ls Backup | grep "mc-backup-" | sort | head -n $(($BACKUPS_COUNT-20)))
-              for f in $OLD_BACKUPS; do
-                rm -f Backup/$f
-              done
-            fi
-
-            echo "Backup completed"
-          fi
-
-          # 5h2m → trigger new workflow
-          if [ "$i" -eq 302 ]; then
-            echo "Triggering new workflow..."
-            curl -X POST \
-              -H "Authorization: Bearer $GH_PAT" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/restart.yml/dispatches \
-              -d '{"ref":"main"}'
-          fi
-
-          # 5h3m → safely exit old workflow
-          if [ "$i" -eq 303 ]; then
-            echo "Previous workflow going offline..."
-            exit 0
-          fi
-        done
+    # 6️⃣ Run Minecraft Server with Backups (Testing)
+    - name: Run Minecraft Server - Test Mode
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
+      run: |
+        mkdir -p Backup
+
+        # Keep only latest 2 backup cycles (8 files)
+        BACKUPS=$(ls -1tr Backup | grep 'backup' | sort)
+        COUNT=$(echo "$BACKUPS" | wc -l)
+        if [ $COUNT -gt 8 ]; then
+          TO_DELETE=$(echo "$BACKUPS" | head -n $(($COUNT - 8)))
+          echo "Deleting old backup files:"
+          echo "$TO_DELETE"
+          echo "$TO_DELETE" | xargs -I {} rm -f Backup/{}
+        fi
+
+        # Start Minecraft server in background
+        java -Xms1G -Xmx1G -jar paper-1.21.8-58.jar nogui &
+
+        # Backup loop: every 30 seconds, 2 cycles for testing
+        for i in {1..2}; do
+          sleep 30  # 30-second interval
+
+          # Create 4 incremental backups
+          for PART in {1..4}; do
+            ZIP_NAME="Backup/${PART}-backup-$(date +'%Y-%m-%d_%H-%M-%S').zip"
+            zip -r $ZIP_NAME world/ plugins/ config/
+          done
+
+          # Remove old incremental files beyond 2 cycles (latest 8 files)
+          BACKUPS=$(ls -1tr Backup | grep 'backup' | sort)
+          COUNT=$(echo "$BACKUPS" | wc -l)
+          if [ $COUNT -gt 8 ]; then
+            TO_DELETE=$(echo "$BACKUPS" | head -n $(($COUNT - 8)))
+            echo "Deleting old backup files:"
+            echo "$TO_DELETE"
+            echo "$TO_DELETE" | xargs -I {} rm -f Backup/{}
+          fi
+
+          # Commit and push incremental backups
+          git config --global user.name "Auto Save Bot"
+          git config --global user.email "autosave@github.com"
+          git add Backup/
+          git commit -m "Backup at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes"
+          git push origin HEAD:main --force || echo "Push failed"
+        done
+
+        # 1 min: Stop server and create final backup
+        echo "1 minute reached, stopping server..."
+        FINAL_ZIP="minecraft-backup-final-$(date +'%Y-%m-%d_%H-%M-%S').zip"
+        zip -r $FINAL_ZIP world/ plugins/ config/
+        pkill -f "paper-1.21.8-58.jar"
+
+        # Push final backup to repo
+        git add $FINAL_ZIP
+        git commit -m "Final backup at $(date +"%Y-%m-%d_%H-%M-%S")" || echo "No changes"
+        git push origin HEAD:main --force || echo "Push failed"
+
+        # 2 min: Trigger new workflow
+        echo "Triggering new workflow..."
+        curl -X POST \
+          -H "Authorization: Bearer $GH_PAT" \
+          -H "Accept: application/vnd.github+json" \
+          https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/mc-server.yml/dispatches \
+          -d '{"ref":"main"}'
+
+        # 3 min: Exit workflow
+        echo "Waiting 1 minute before exiting workflow..."
+        sleep 60
+        echo "Exiting test workflow."
