@@ -55,7 +55,7 @@ jobs:
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         SERVER_PID=$!
 
-        for i in $(seq 1 300); do  # ~5h
+        for i in $(seq 1 1); do  # ~5h
           sleep 60
           if (( $i % 30 == 0 )); then
             TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
