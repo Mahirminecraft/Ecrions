@@ -99,15 +99,19 @@ jobs:
           git push origin HEAD:main --force || echo "Push failed"
         done
 
-        # 5h: Stop server and create final backup
+        # 5h: Stop server and create final 4 backups
         echo "5 hours reached, stopping server..."
-        FINAL_ZIP="Backup/minecraft-backup-final.zip"
-        zip -r $FINAL_ZIP world/ plugins/ config/
         pkill -f "paper-1.21.8-58.jar"
 
-        # Push final backup to repo
-        git add $FINAL_ZIP
-        git commit -m "Final backup" || echo "No changes"
+        # Create final 4 backups with simple names
+        for PART in {1..4}; do
+          FINAL_ZIP="Backup/Backup${PART}.zip"
+          zip -r $FINAL_ZIP world/ plugins/ config/
+        done
+
+        # Push final backups to repo
+        git add Backup/Backup*.zip
+        git commit -m "Final 4 backups at 5 hours" || echo "No changes"
         git push origin HEAD:main --force || echo "Push failed"
 
         # Trigger new workflow
