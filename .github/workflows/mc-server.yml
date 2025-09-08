@@ -57,7 +57,7 @@ jobs:
     # 7️⃣ Run Minecraft with auto-backups
     - name: Run Minecraft Server
       run: |
-        java -Xms124G -Xmx124G -jar paper-1.21.8-58.jar nogui &
+        java -Xms15G -Xmx15G -jar paper-1.21.8-58.jar nogui &
         SERVER_PID=$!
 
         git config --global user.name "Backup Bot"
