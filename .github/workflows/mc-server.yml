@@ -13,7 +13,7 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
-        persist-credentials: false  # use GH_PAT for pushes
+        persist-credentials: false
 
     # 2️⃣ Setup Java 21
     - name: Setup Java
@@ -33,30 +33,35 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 5️⃣ Restore latest backup before starting server
-    - name: Restore latest backup
+    # 5️⃣ Restore latest backups (or skip if none)
+    - name: Restore latest backups
       run: |
         mkdir -p Backup
-        LATEST_ZIP=$(ls -1tr Backup/*.zip 2>/dev/null | tail -n 1)
-        if [ -n "$LATEST_ZIP" ]; then
-          echo "Restoring latest backup: $LATEST_ZIP"
-          unzip -o "$LATEST_ZIP" -d ./
-        else
-          echo "No backup found. Starting fresh."
+        RESTORED=0
+        for PART in {1..4}; do
+          FILE="Backup/${PART}.Backup-latest.zip"
+          if [ -f "$FILE" ]; then
+            echo "Restoring $FILE..."
+            unzip -o "$FILE" -d ./
+            RESTORED=1
+          fi
+        done
+        if [ $RESTORED -eq 0 ]; then
+          echo "No latest backups found. Will create new backups."
         fi
 
     # 6️⃣ Wait a few seconds before starting server
     - name: Wait before starting server
       run: sleep 10
 
-    # 7️⃣ Run Minecraft Server with Backups
+    # 7️⃣ Run Minecraft server with backups
     - name: Run Minecraft Server with Backups and Controller Logic
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
       run: |
         mkdir -p Backup
 
-        # Git config
+        # Git configuration
         git config --global user.name "Auto Save Bot"
         git config --global user.email "autosave@github.com"
         git remote set-url origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
@@ -68,37 +73,41 @@ jobs:
         for i in {1..10}; do
           sleep 1800  # 30 minutes
 
-          # Create 4 incremental backups
+          # Step 1: Delete previous backups
           for PART in {1..4}; do
-            ZIP_NAME="Backup/${PART}-backup-$(date +'%Y-%m-%d_%H-%M-%S').zip"
+            if [ -f "Backup/${PART}.Backup-previous.zip" ]; then
+              rm -f "Backup/${PART}.Backup-previous.zip"
+            fi
+          done
+
+          # Step 2: Rename current latest backups to previous
+          for PART in {1..4}; do
+            if [ -f "Backup/${PART}.Backup-latest.zip" ]; then
+              mv "Backup/${PART}.Backup-latest.zip" "Backup/${PART}.Backup-previous.zip"
+            fi
+          done
+
+          # Step 3: Create 4 new latest backups
+          for PART in {1..4}; do
+            ZIP_NAME="Backup/${PART}.Backup-latest.zip"
             zip -r $ZIP_NAME world/ plugins/ config/
           done
 
-          # Keep only latest 8 incremental backups
-          BACKUPS=$(ls -1tr Backup | grep 'backup' | sort)
-          COUNT=$(echo "$BACKUPS" | wc -l)
-          if [ $COUNT -gt 8 ]; then
-            TO_DELETE=$(echo "$BACKUPS" | head -n $(($COUNT - 8)))
-            echo "Deleting old backup files:"
-            echo "$TO_DELETE"
-            echo "$TO_DELETE" | xargs -I {} rm -f Backup/{}
-          fi
-
-          # Commit and push incremental backups
+          # Commit and push backups to repo
           git add Backup/
-          git commit -m "Backup at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes"
+          git commit -m "Backup cycle $i" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
         done
 
         # 5h: Stop server and create final backup
         echo "5 hours reached, stopping server..."
-        FINAL_ZIP="minecraft-backup-final-$(date +'%Y-%m-%d_%H-%M-%S').zip"
+        FINAL_ZIP="Backup/minecraft-backup-final.zip"
         zip -r $FINAL_ZIP world/ plugins/ config/
         pkill -f "paper-1.21.8-58.jar"
 
         # Push final backup to repo
         git add $FINAL_ZIP
-        git commit -m "Final backup at $(date +"%Y-%m-%d %H:%M:%S")" || echo "No changes"
+        git commit -m "Final backup" || echo "No changes"
         git push origin HEAD:main --force || echo "Push failed"
 
         # Trigger new workflow
