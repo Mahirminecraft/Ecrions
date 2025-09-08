@@ -1,0 +1,13 @@
+name: Restart Minecraft Workflow
+
+on:
+  workflow_dispatch:
+
+jobs:
+  restart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger mc-server.yml
+        run: |
+          echo "🚀 Starting new Minecraft server workflow"
+          gh workflow run mc-server.yml
