@@ -33,7 +33,7 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 5️⃣ Restore latest backups (or skip if none)
+    # 5️⃣ Restore latest backups (robust)
     - name: Restore latest backups
       run: |
         mkdir -p Backup
@@ -42,8 +42,10 @@ jobs:
           FILE="Backup/${PART}.Backup-latest.zip"
           if [ -f "$FILE" ]; then
             echo "Restoring $FILE..."
-            unzip -o "$FILE" -d ./
+            unzip -o "$FILE" -d ./ || echo "Warning: $FILE could not be fully extracted, continuing..."
             RESTORED=1
+          else
+            echo "$FILE not found, skipping..."
           fi
         done
         if [ $RESTORED -eq 0 ]; then
@@ -69,7 +71,7 @@ jobs:
         # Start Minecraft server in background
         java -Xms2G -Xmx2G -jar paper-1.21.8-58.jar nogui &
 
-        # Backup loop: every 15 seconds for test (2 cycles)
+        # Backup loop: every 15 seconds for 2 cycles (test)
         for i in {1..2}; do
           sleep 15
 
@@ -105,7 +107,7 @@ jobs:
 
         for PART in {1..4}; do
           FINAL_ZIP="Backup/Backup${PART}.zip"
-          zip -r $FINAL_ZIP world/ plugins/ config/
+          zip -r $FINAL_ZIP world/ plugins/ config/ || echo "Skipped some files, continuing..."
         done
 
         git add Backup/Backup*.zip
