@@ -1,4 +1,4 @@
-name: Minecraft Paper Server with Auto Backup & Rolling Workflow
+name: Minecraft Paper Server with Backup & Auto-Restart
 
 on:
   workflow_dispatch:
@@ -6,123 +6,102 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours
+    timeout-minutes: 360  # 6 hours runtime
 
     steps:
-    # 1️⃣ Checkout repo
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
         persist-credentials: false
-        lfs: true
+        lfs: false
 
-    # 2️⃣ Setup environment
     - name: Setup environment
       run: |
         sudo apt-get update
-        sudo apt-get install -y git-lfs zip unzip curl jq
-        git lfs install
-        mkdir -p Backup
+        sudo apt-get install -y zip unzip curl jq
+        git config --global user.name "Backup Bot"
+        git config --global user.email "backup@github.com"
 
-    # 3️⃣ Setup Java 21
-    - name: Setup Java 21
+    - name: Setup Java
       uses: actions/setup-java@v3
       with:
         distribution: temurin
         java-version: '21'
 
-    # 4️⃣ Download Paper jar
-    - name: Download Paper 1.21.8 build #58
+    - name: Download Paper
       run: |
         if [ ! -f paper-1.21.8-58.jar ]; then
           curl -L -o paper-1.21.8-58.jar \
             https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
         fi
 
-    # 5️⃣ Accept EULA
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 6️⃣ Restore latest backup
     - name: Restore latest backup
       run: |
-        LATEST_BACKUP=$(ls Backup/mc-backup-*.zip 2>/dev/null | sort -r | head -n1 || true)
-        if [ -n "$LATEST_BACKUP" ]; then
-          echo "Restoring from $LATEST_BACKUP"
-          unzip -o "$LATEST_BACKUP" -d .
+        mkdir -p Backup
+        LATEST_PREFIX=$(ls Backup 2>/dev/null | grep "mc-backup-" | sed 's/\.zip.*//' | sort -r | head -n1 || true)
+        if [ -n "$LATEST_PREFIX" ]; then
+          echo "Restoring latest backup: $LATEST_PREFIX"
+          cat Backup/${LATEST_PREFIX}.zip* > Backup/${LATEST_PREFIX}-full.zip
+          unzip -o Backup/${LATEST_PREFIX}-full.zip -d .
         else
           echo "No backup found, starting fresh server"
         fi
 
-    # 7️⃣ Run Minecraft with auto-backups
-    - name: Run Minecraft Server
+    - name: Run Minecraft Server with Periodic Backups
       run: |
-        java -Xms15G -Xmx15G -jar paper-1.21.8-58.jar nogui &
+        java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         SERVER_PID=$!
 
-        git config --global user.name "Backup Bot"
-        git config --global user.email "backup@github.com"
-        git remote remove origin || true
-        git remote add origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
-
-        for i in $(seq 1 360); do
+        for i in $(seq 1 300); do  # ~5h
           sleep 60
-          TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
-
-          # Every 30 min backup
           if (( $i % 30 == 0 )); then
-            BACKUP_PREFIX="Backup/mc-backup-$TIMESTAMP"
-            echo "Creating split backup at $TIMESTAMP"
-            zip -r -s 500m "$BACKUP_PREFIX.zip" world world_nether world_the_end plugins config || echo "Backup failed"
+            TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
+            echo "⏳ Backup at $TIMESTAMP"
 
-            # Commit only latest 5 backups
-            git add Backup/
-            git commit -m "Backup at $TIMESTAMP" || echo "No changes"
-            git push origin HEAD:main --force || echo "Push failed"
+            mkdir -p Backup
+            zip -r "mc-backup-${TIMESTAMP}.zip" world world_nether world_the_end \
+              -x "*/logs/*" "*/cache/*"
+            split -b 500M "mc-backup-${TIMESTAMP}.zip" "Backup/mc-backup-${TIMESTAMP}.zip.part-"
 
-            # Keep only last 5 backups
-            ls -tp Backup/mc-backup-*.zip | grep -v '\/$' | tail -n +6 | xargs -r rm --
-            ls -tp Backup/mc-backup-*.z*  | grep -v '\/$' | tail -n +16 | xargs -r rm --
+            gh release create "backup-${TIMESTAMP}" "mc-backup-${TIMESTAMP}.zip" \
+              --title "Backup $TIMESTAMP" --notes "Auto backup"
 
-            # Upload backup to Releases
-            RELEASE_RESPONSE=$(curl -s -X POST \
-              -H "Authorization: token $GH_PAT" \
-              -H "Content-Type: application/json" \
-              -d "{\"tag_name\":\"backup-$TIMESTAMP\",\"name\":\"backup-$TIMESTAMP\",\"body\":\"Auto backup at $TIMESTAMP\",\"draft\":false,\"prerelease\":false}" \
-              https://api.github.com/repos/Mahirminecraft/Ecrions/releases)
+            BACKUPS=$(ls Backup | grep "mc-backup-" | sed 's/\.zip.*//' | sort -r | uniq)
+            COUNT=$(echo "$BACKUPS" | wc -l)
+            if [ "$COUNT" -gt 5 ]; then
+              REMOVE=$(echo "$BACKUPS" | tail -n +6)
+              for prefix in $REMOVE; do
+                rm -f Backup/${prefix}.zip*
+              done
+            fi
 
-            UPLOAD_URL=$(echo $RELEASE_RESPONSE | jq -r .upload_url | sed -e "s/{?name,label}//")
-            for FILE in $BACKUP_PREFIX.zip*; do
-              curl -X POST \
-                -H "Authorization: token $GH_PAT" \
-                -H "Content-Type: application/zip" \
-                --data-binary @$FILE \
-                "$UPLOAD_URL?name=$(basename $FILE)"
-            done
-          fi
-
-          # 5h → stop server + final backup
-          if [ "$i" -eq 1 ]; then
-            echo "Stopping server at 5h..."
-            kill $SERVER_PID
-            wait $SERVER_PID || true
-            exit 0
+            git add Backup || true
+            git commit -m "Backup $TIMESTAMP" || echo "No changes"
+            git push https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git HEAD:main || true
           fi
         done
-      env:
-        GH_PAT: ${{ secrets.GH_PAT }}
 
-  trigger-new:
-    needs: minecraft
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger new workflow
-        run: |
-          echo "Starting new workflow..."
-          curl -X POST \
-            -H "Authorization: Bearer $GH_PAT" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/mc-server.yml/dispatches \
-            -d '{"ref":"main"}'
-        env:
-          GH_PAT: ${{ secrets.GH_PAT }}
+        echo "🛑 Stopping server after 5h..."
+        kill $SERVER_PID
+        wait $SERVER_PID || true
+
+    - name: Final Backup & Trigger Restart Workflow
+      run: |
+        TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
+        zip -r "mc-backup-${TIMESTAMP}.zip" world world_nether world_the_end \
+          -x "*/logs/*" "*/cache/*"
+        split -b 500M "mc-backup-${TIMESTAMP}.zip" "Backup/mc-backup-${TIMESTAMP}.zip.part-"
+
+        gh release create "backup-${TIMESTAMP}" "mc-backup-${TIMESTAMP}.zip" \
+          --title "Final Backup $TIMESTAMP" --notes "Server shutdown backup"
+
+        git add Backup || true
+        git commit -m "Final backup $TIMESTAMP" || echo "No changes"
+        git push https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git HEAD:main || true
+
+        echo "🚀 Triggering restart workflow in 1 min..."
+        sleep 60
+        gh workflow run restart.yml
