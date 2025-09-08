@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 360  # 6 hours
 
     steps:
-    # 1️⃣ Checkout repository
+    # 1️⃣ Checkout repo
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
@@ -40,7 +40,7 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 6️⃣ Restore latest backup (split zip) if exists
+    # 6️⃣ Restore latest backup if exists
     - name: Restore latest backup
       run: |
         mkdir -p Backup
@@ -51,9 +51,10 @@ jobs:
           unzip -o Backup/${LATEST_PREFIX}-full.zip -d .
         else
           echo "No backup found, starting fresh server"
+        fi
 
     # 7️⃣ Run Minecraft server with scheduled backup & workflow automation
-    - name: Run Minecraft Server with Auto Backup
+    - name: Run Minecraft Server
       run: |
         java -Xms14G -Xmx14G -jar paper-1.21.8-58.jar nogui &
         SERVER_PID=$!
@@ -74,12 +75,12 @@ jobs:
           fi
 
           # 5h1m → create split backup and push to repo
-          if [ "$i" -eq 1 ]; then
+          if [ "$i" -eq 301 ]; then
             BACKUP_PREFIX="Backup/mc-backup-$TIMESTAMP"
             echo "Creating split backup $BACKUP_PREFIX after server stopped"
             zip -r -s 500m "$BACKUP_PREFIX.zip" world world_nether world_the_end plugins config || echo "Some files skipped"
 
-            # Keep only latest 5 backups in repo
+            # Keep only latest 5 backups
             BACKUPS_TO_DELETE=$(ls Backup | grep "mc-backup-" | sort -r | tail -n +6)
             for file in $BACKUPS_TO_DELETE; do
               rm -f "Backup/$file"
@@ -89,7 +90,7 @@ jobs:
             git commit -m "Backup at $TIMESTAMP" || echo "No changes"
             git push origin HEAD:main --force || echo "Push failed"
 
-            # Also upload final backup to Release
+            # Upload final backup to Release
             RELEASE_RESPONSE=$(curl -s -X POST \
               -H "Authorization: token $GH_PAT" \
               -H "Content-Type: application/json" \
@@ -105,17 +106,17 @@ jobs:
           fi
 
           # 5h2m → trigger new workflow
-          if [ "$i" -eq 2 ]; then
+          if [ "$i" -eq 302 ]; then
             echo "Triggering new workflow..."
             curl -X POST \
               -H "Authorization: Bearer $GH_PAT" \
               -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/mc-server.yml/dispatches \
+              https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/restart.yml/dispatches \
               -d '{"ref":"main"}'
           fi
 
           # 5h3m → safely exit current workflow
-          if [ "$i" -eq 3 ]; then
+          if [ "$i" -eq 303 ]; then
             echo "Exiting previous workflow safely..."
             exit 0
           fi
