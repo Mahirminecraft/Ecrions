@@ -8,6 +8,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger mc-server.yml
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}   # <-- use your PAT here
         run: |
           echo "🚀 Starting new Minecraft server workflow"
           gh workflow run mc-server.yml
