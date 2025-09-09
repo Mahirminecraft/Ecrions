@@ -33,7 +33,7 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 5️⃣ Restore latest backups (or skip if none)
+    # 5️⃣ Restore latest backups (always unzip before starting server)
     - name: Restore latest backups
       run: |
         mkdir -p Backup
@@ -41,13 +41,15 @@ jobs:
         for PART in {1..4}; do
           FILE="Backup/${PART}.Backup-latest.zip"
           if [ -f "$FILE" ]; then
-            echo "Restoring $FILE..."
-            unzip -o "$FILE" -d ./
+            echo "Restoring $FILE into server directory..."
+            unzip -o "$FILE" -d ./ || echo "Failed to unzip $FILE, continuing..."
             RESTORED=1
+          else
+            echo "$FILE not found, skipping..."
           fi
         done
         if [ $RESTORED -eq 0 ]; then
-          echo "No latest backups found. Will create new backups."
+          echo "No latest backups found. Server will start fresh."
         fi
 
     # 6️⃣ Wait a few seconds before starting server
