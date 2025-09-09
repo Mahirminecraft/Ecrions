@@ -11,7 +11,7 @@ jobs:
     steps:
     # 1️⃣ Checkout repo
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4 # Updated to v4
       with:
         persist-credentials: false
 
@@ -22,6 +22,23 @@ jobs:
         distribution: temurin
         java-version: '21'
 
+    # --------------------------------------------------------------------
+    # ➕ ADDED: Setup Cloudflare Tunnel
+    # --------------------------------------------------------------------
+    - name: Download cloudflared
+      run: wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared && chmod +x cloudflared
+
+    - name: Run Cloudflare Tunnel
+      env:
+        # IMPORTANT: Create this secret in your repository settings
+        TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+      run: |
+        ./cloudflared tunnel --no-autoupdate run --token $TUNNEL_TOKEN &> cloudflared.log &
+        echo "Waiting for Cloudflare Tunnel to connect..."
+        sleep 15
+        cat cloudflared.log
+    # --------------------------------------------------------------------
+    
     # 3️⃣ Ensure Paper jar exists
     - name: Download Paper 1.21.8 build #58
       run: |
@@ -56,26 +73,7 @@ jobs:
     - name: Wait before starting server
       run: sleep 10
 
-    # 7️⃣ Install and run Cloudflare Tunnel for Minecraft
-    - name: Setup Cloudflare Tunnel
-      run: |
-        # Install cloudflared
-        curl -L -o cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
-        sudo dpkg -i cloudflared.deb
-
-        # Create config for tunnel
-        mkdir -p ~/.cloudflared
-        echo "tunnel: ${{ secrets.CF_TUNNEL_ID }}" > ~/.cloudflared/config.yml
-        echo "credentials-file: /root/.cloudflared/${{ secrets.CF_TUNNEL_ID }}.json" >> ~/.cloudflared/config.yml
-        echo "ingress:" >> ~/.cloudflared/config.yml
-        echo "  - hostname: ecrion.dqzz.io" >> ~/.cloudflared/config.yml
-        echo "    service: tcp://localhost:25565" >> ~/.cloudflared/config.yml
-        echo "  - service: http_status:404" >> ~/.cloudflared/config.yml
-
-        # Run the tunnel in background
-        cloudflared tunnel run ${{ secrets.CF_TUNNEL_ID }} &
-
-    # 8️⃣ Run Minecraft server with backups
+    # 7️⃣ Run Minecraft server with backups
     - name: Run Minecraft Server with Backups and Controller Logic
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
@@ -88,6 +86,7 @@ jobs:
         git remote set-url origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
 
         # Start Minecraft server in background
+        # The default Minecraft port is 25565
         java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
 
         # Backup loop: every 30 minutes for 5 hours (10 cycles)
