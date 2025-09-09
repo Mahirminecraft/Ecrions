@@ -6,114 +6,116 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 370  # a bit more than 6h for 5h2m logic
+    timeout-minutes: 360  # max 6 hours
 
     steps:
+    # 1️⃣ Checkout repo
     - name: Checkout repository
       uses: actions/checkout@v3
       with:
         persist-credentials: false
 
+    # 2️⃣ Setup Java 21
     - name: Setup Java
       uses: actions/setup-java@v3
       with:
         distribution: temurin
         java-version: '21'
 
-    - name: Install tools
-      run: |
-        sudo apt-get update -y
-        sudo apt-get install -y zip unzip jq
-
+    # 3️⃣ Ensure Paper jar exists
     - name: Download Paper 1.21.8 build #58
       run: |
-        while [ ! -f paper-1.21.8-58.jar ]; do
-          curl -fL -o paper-1.21.8-58.jar \
-            https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar \
-            && break
-          echo "Download failed, retrying in 15s..."
-          sleep 15
-        done
+        if [ ! -f paper-1.21.8-58.jar ]; then
+          curl -L -o paper-1.21.8-58.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
+        fi
 
+    # 4️⃣ Accept EULA
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    - name: Restore files from repo
+    # 5️⃣ Restore latest backups (always unzip before starting server)
+    - name: Restore latest backups
       run: |
-        git fetch origin main --depth=1 || true
-        git reset --hard origin/main || true
+        mkdir -p Backup
+        RESTORED=0
+        for PART in {1..4}; do
+          FILE="Backup/${PART}.Backup-latest.zip"
+          if [ -f "$FILE" ]; then
+            echo "Restoring $FILE into server directory..."
+            unzip -o "$FILE" -d ./ || echo "Failed to unzip $FILE, continuing..."
+            RESTORED=1
+          else
+            echo "$FILE not found, skipping..."
+          fi
+        done
+        if [ $RESTORED -eq 0 ]; then
+          echo "No latest backups found. Server will start fresh."
+        fi
 
+    # 6️⃣ Wait a few seconds before starting server
     - name: Wait before starting server
-      run: sleep 5
+      run: sleep 10
 
-    - name: Run Minecraft Server with Backup & Controller
+    # 7️⃣ Install and run Cloudflare Tunnel for Minecraft
+    - name: Setup Cloudflare Tunnel
+      run: |
+        # Install cloudflared
+        curl -L -o cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+        sudo dpkg -i cloudflared.deb
+
+        # Create config for tunnel
+        mkdir -p ~/.cloudflared
+        echo "tunnel: ${{ secrets.CF_TUNNEL_ID }}" > ~/.cloudflared/config.yml
+        echo "credentials-file: /root/.cloudflared/${{ secrets.CF_TUNNEL_ID }}.json" >> ~/.cloudflared/config.yml
+        echo "ingress:" >> ~/.cloudflared/config.yml
+        echo "  - hostname: ecrion.ddns.com" >> ~/.cloudflared/config.yml
+        echo "    service: tcp://localhost:25565" >> ~/.cloudflared/config.yml
+        echo "  - service: http_status:404" >> ~/.cloudflared/config.yml
+
+        # Run the tunnel in background
+        cloudflared tunnel run ${{ secrets.CF_TUNNEL_ID }} &
+
+    # 8️⃣ Run Minecraft server with backups
+    - name: Run Minecraft Server with Backups and Controller Logic
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
       run: |
-        set -euo pipefail
-        REPO="https://$GH_PAT@github.com/${{ github.repository }}.git"
-
-        git config --global user.name "Auto Save Bot"
-        git config --global user.email "autosave@github.com"
-        git remote set-url origin "$REPO"
-
         mkdir -p Backup
 
+        # Git configuration
+        git config --global user.name "Auto Save Bot"
+        git config --global user.email "autosave@github.com"
+        git remote set-url origin https://$GH_PAT@github.com/Mahirminecraft/Ecrions.git
+
+        # Start Minecraft server in background
         java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
-        MCS_PID=$!
 
+        # Backup loop: every 30 minutes for 5 hours (10 cycles)
         for i in {1..10}; do
-          sleep 1800
+          sleep 1800  # 30 minutes
 
-          echo "=== Backup cycle $i ==="
-
-          # Rotate backups
+          # Step 1: Delete previous backups
           for PART in {1..4}; do
-            [ -f "Backup/${PART}.Backup-previous.zip" ] && rm -f "Backup/${PART}.Backup-previous.zip"
-            [ -f "Backup/${PART}.Backup-latest.zip" ] && mv "Backup/${PART}.Backup-latest.zip" "Backup/${PART}.Backup-previous.zip"
-            zip -r "Backup/${PART}.Backup-latest.zip" world/ plugins/ config/ || true
+            if [ -f "Backup/${PART}.Backup-previous.zip" ]; then
+              rm -f "Backup/${PART}.Backup-previous.zip"
+            fi
           done
 
-          # Sync repo with all files (overwrite/add, no deletes)
-          git add -A
-          git commit -m "Backup cycle $i" || true
-          until git push origin HEAD:main --force; do
-            echo "Push failed, retrying in 10s..."
-            sleep 10
+          # Step 2: Rename current latest backups to previous
+          for PART in {1..4}; do
+            if [ -f "Backup/${PART}.Backup-latest.zip" ]; then
+              mv "Backup/${PART}.Backup-latest.zip" "Backup/${PART}.Backup-previous.zip"
+            fi
           done
+
+          # Step 3: Create 4 new latest backups
+          for PART in {1..4}; do
+            ZIP_NAME="Backup/${PART}.Backup-latest.zip"
+            zip -r $ZIP_NAME world/ plugins/ config/
+          done
+
+          # Commit and push backups to repo
+          git add Backup/
+          git commit -m "Backup cycle $i" || echo "No changes"
+          git push origin HEAD:main --force || echo "Push failed"
         done
-
-        echo "=== Final backup at 5h ==="
-        FINAL_ZIP="Backup/minecraft-backup-final.zip"
-        zip -r "$FINAL_ZIP" world/ plugins/ config/ || true
-
-        git add -A
-        git commit -m "Final backup" || true
-        until git push origin HEAD:main --force; do
-          echo "Final push failed, retrying..."
-          sleep 10
-        done
-
-        # Create release
-        TAG="backup-$(date -u +%Y%m%dT%H%M%SZ)"
-        curl -s -X POST \
-          -H "Authorization: token $GH_PAT" \
-          -H "Content-Type: application/json" \
-          -d "{\"tag_name\":\"$TAG\",\"name\":\"Final backup $TAG\",\"body\":\"Auto backup\"}" \
-          https://api.github.com/repos/${{ github.repository }}/releases
-
-        # Trigger new workflow (5h1m)
-        sleep 60
-        until curl -s -X POST \
-          -H "Authorization: token $GH_PAT" \
-          -H "Accept: application/vnd.github+json" \
-          https://api.github.com/repos/${{ github.repository }}/actions/workflows/${{ github.workflow }}/dispatches \
-          -d '{"ref":"main"}'; do
-          echo "Dispatch failed, retrying..."
-          sleep 10
-        done
-
-        # Stop current workflow at 5h2m
-        sleep 60
-        kill -9 $MCS_PID || true
-        echo "Workflow stopped."
