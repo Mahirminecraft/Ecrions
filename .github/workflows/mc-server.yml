@@ -33,7 +33,7 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    # 5️⃣ Restore latest backups (robust)
+    # 5️⃣ Restore latest backups (or skip if none)
     - name: Restore latest backups
       run: |
         mkdir -p Backup
@@ -42,10 +42,8 @@ jobs:
           FILE="Backup/${PART}.Backup-latest.zip"
           if [ -f "$FILE" ]; then
             echo "Restoring $FILE..."
-            unzip -o "$FILE" -d ./ || echo "Warning: $FILE could not be fully extracted, continuing..."
+            unzip -o "$FILE" -d ./
             RESTORED=1
-          else
-            echo "$FILE not found, skipping..."
           fi
         done
         if [ $RESTORED -eq 0 ]; then
@@ -55,14 +53,6 @@ jobs:
     # 6️⃣ Wait a few seconds before starting server
     - name: Wait before starting server
       run: sleep 10
-
-    # 6️⃣a Update No-IP Dynamic DNS
-    - name: Update No-IP Dynamic DNS
-      run: |
-        SERVER_IP=$(curl -s https://api.ipify.org)
-        echo "Public IP: $SERVER_IP"
-        curl -u "${{ secrets.NOIP_USERNAME }}:${{ secrets.NOIP_PASSWORD }}" \
-        "https://dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$SERVER_IP"
 
     # 7️⃣ Run Minecraft server with backups
     - name: Run Minecraft Server with Backups and Controller Logic
@@ -100,7 +90,7 @@ jobs:
           # Step 3: Create 4 new latest backups
           for PART in {1..4}; do
             ZIP_NAME="Backup/${PART}.Backup-latest.zip"
-            zip -r $ZIP_NAME world/ plugins/ config/ || echo "Skipped some files, continuing..."
+            zip -r $ZIP_NAME world/ plugins/ config/
           done
 
           # Commit and push backups to repo
@@ -108,3 +98,27 @@ jobs:
           git commit -m "Backup cycle $i" || echo "No changes"
           git push origin HEAD:main --force || echo "Push failed"
         done
+
+        # 5h: Stop server and create final backup
+        echo "5 hours reached, stopping server..."
+        FINAL_ZIP="Backup/minecraft-backup-final.zip"
+        zip -r $FINAL_ZIP world/ plugins/ config/
+        pkill -f "paper-1.21.8-58.jar"
+
+        # Push final backup to repo
+        git add $FINAL_ZIP
+        git commit -m "Final backup" || echo "No changes"
+        git push origin HEAD:main --force || echo "Push failed"
+
+        # Trigger new workflow
+        echo "Triggering new workflow..."
+        curl -X POST \
+          -H "Authorization: Bearer $GH_PAT" \
+          -H "Accept: application/vnd.github+json" \
+          https://api.github.com/repos/Mahirminecraft/Ecrions/actions/workflows/mc-server.yml/dispatches \
+          -d '{"ref":"main"}'
+
+        # Exit workflow after 2 minutes
+        echo "Waiting 2 minutes before exiting workflow..."
+        sleep 120
+        echo "Exiting controller workflow."
