@@ -1,0 +1,59 @@
+name: Minecraft Server with Cloudflare Tunnel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-server:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------------------------
+      # Step 1: Start your Minecraft server (or other service) on port 25565
+      # This is just an example. Replace with your actual server start command.
+      # --------------------------------------------------------------------
+      - name: Start TCP Server on port 25565
+        run: |
+          echo "Starting service on port 25565..."
+          # Replace the next line with your actual server command, e.g., java -jar server.jar
+          echo "Minecraft server is running!" | nc -lk 25565 &
+          
+      # --------------------------------------------------------------------
+      # Step 2: Download and install cloudflared
+      # --------------------------------------------------------------------
+      - name: Download cloudflared
+        run: wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared && chmod +x cloudflared
+
+      # --------------------------------------------------------------------
+      # Step 3: Run the Cloudflare Tunnel in the background
+      # --------------------------------------------------------------------
+      - name: Run Cloudflare Tunnel
+        env:
+          # Use the NEW token you stored in GitHub secrets
+          TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+        run: |
+          # The command uses the token to authenticate and connect.
+          # It runs in the background (&) and logs to a file.
+          ./cloudflared tunnel --no-autoupdate run --token $TUNNEL_TOKEN &> cloudflared.log &
+          
+          # Wait a few seconds for the tunnel to establish connection
+          sleep 15
+          
+          # Print the logs to see connection status. This is helpful for debugging.
+          echo "--- Cloudflared Logs ---"
+          cat cloudflared.log
+          echo "------------------------"
+          echo "Tunnel is running. You can now connect to ecrion.qzz.io"
+
+      # --------------------------------------------------------------------
+      # Step 4: Keep the workflow alive
+      # A Minecraft server needs to run for a while. This step waits for 5 hours.
+      # Note: Max job runtime is 6 hours on public repos.
+      # --------------------------------------------------------------------
+      - name: Keep Server Alive
+        run: |
+          echo "Server will run for 5 hours. To stop it, cancel the workflow."
+          sleep 18000 # 5 hours = 18000 seconds
