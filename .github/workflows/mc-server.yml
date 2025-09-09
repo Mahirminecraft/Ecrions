@@ -68,7 +68,7 @@ jobs:
         echo "tunnel: ${{ secrets.CF_TUNNEL_ID }}" > ~/.cloudflared/config.yml
         echo "credentials-file: /root/.cloudflared/${{ secrets.CF_TUNNEL_ID }}.json" >> ~/.cloudflared/config.yml
         echo "ingress:" >> ~/.cloudflared/config.yml
-        echo "  - hostname: ecrion.ddns.com" >> ~/.cloudflared/config.yml
+        echo "  - hostname: ecrion.dqzz.io" >> ~/.cloudflared/config.yml
         echo "    service: tcp://localhost:25565" >> ~/.cloudflared/config.yml
         echo "  - service: http_status:404" >> ~/.cloudflared/config.yml
 
