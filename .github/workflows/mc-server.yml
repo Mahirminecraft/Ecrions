@@ -23,7 +23,7 @@ jobs:
     - name: Install tools
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y zip unzip jq
+        sudo apt-get install -y zip unzip jq wget
 
     - name: Download Paper 1.21.8 build #58
       run: |
@@ -45,50 +45,64 @@ jobs:
 
     - name: Wait before starting server
       run: sleep 5
-    # --------------------------------------------------------------------
-    - name: Download cloudflared
-      run: wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared && chmod +x cloudflared
 
+    # --------------------------------------------------------------------
+    # Install cloudflared
+    - name: Download cloudflared
+      run: |
+        wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
+        chmod +x cloudflared
+
+    # Run Cloudflare Tunnel (Playit-style)
     - name: Run Cloudflare Tunnel
       env:
-        # IMPORTANT: Create this secret in your repository settings
         TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
       run: |
-        ./cloudflared tunnel --no-autoupdate run --token $TUNNEL_TOKEN &> cloudflared.log &
-        echo "Waiting for Cloudflare Tunnel to connect..."
-        sleep 15
-        cat cloudflared.log
+        # Start Minecraft server first
+        java -Xms4G -Xmx4G -jar paper-1.21.8-58.jar nogui &
+        MCS_PID=$!
+
+        # Start tunnel pointing to localhost:25565
+        ./cloudflared tunnel --no-autoupdate run --token $TUNNEL_TOKEN &
+        TUNNEL_PID=$!
+
+        echo "Waiting 20s for tunnel to establish..."
+        sleep 20
+        echo "Minecraft PID: $MCS_PID, Tunnel PID: $TUNNEL_PID"
+
+        # Keep workflow alive for 5 hours 2 minutes (to match your backup logic)
+        sleep 18120
+
+        # Cleanup
+        kill -9 $MCS_PID || true
+        kill -9 $TUNNEL_PID || true
+        echo "Minecraft server and tunnel stopped."
     # --------------------------------------------------------------------
-    
-    - name: Run Minecraft Server with Backup & Controller
+
+    - name: Run Backup & Controller Logic
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
       run: |
-        set -euo pipefail
-        REPO="https://$GH_PAT@github.com/${{ github.repository }}.git"
-
-        git config --global user.name "Auto Save Bot"
-        git config --global user.email "autosave@github.com"
-        git remote set-url origin "$REPO"
-
+        # Backup folder
         mkdir -p Backup
 
-        java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
-        MCS_PID=$!
+        # Git configuration
+        git config --global user.name "Auto Save Bot"
+        git config --global user.email "autosave@github.com"
+        git remote set-url origin https://$GH_PAT@github.com/${{ github.repository }}.git
 
+        # Backup loop (every 30min for 5h)
         for i in {1..10}; do
           sleep 1800
 
           echo "=== Backup cycle $i ==="
 
-          # Rotate backups
           for PART in {1..4}; do
             [ -f "Backup/${PART}.Backup-previous.zip" ] && rm -f "Backup/${PART}.Backup-previous.zip"
             [ -f "Backup/${PART}.Backup-latest.zip" ] && mv "Backup/${PART}.Backup-latest.zip" "Backup/${PART}.Backup-previous.zip"
             zip -r "Backup/${PART}.Backup-latest.zip" world/ plugins/ config/ || true
           done
 
-          # Sync repo with all files (overwrite/add, no deletes)
           git add -A
           git commit -m "Backup cycle $i" || true
           until git push origin HEAD:main --force; do
@@ -97,14 +111,12 @@ jobs:
           done
         done
 
-        echo "=== Final backup at 5h ==="
+        # Final backup
         FINAL_ZIP="Backup/minecraft-backup-final.zip"
         zip -r "$FINAL_ZIP" world/ plugins/ config/ || true
-
         git add -A
         git commit -m "Final backup" || true
         until git push origin HEAD:main --force; do
-          echo "Final push failed, retrying..."
           sleep 10
         done
 
@@ -116,18 +128,4 @@ jobs:
           -d "{\"tag_name\":\"$TAG\",\"name\":\"Final backup $TAG\",\"body\":\"Auto backup\"}" \
           https://api.github.com/repos/${{ github.repository }}/releases
 
-        # Trigger new workflow (5h1m)
-        sleep 60
-        until curl -s -X POST \
-          -H "Authorization: token $GH_PAT" \
-          -H "Accept: application/vnd.github+json" \
-          https://api.github.com/repos/${{ github.repository }}/actions/workflows/mc-server.yml/dispatches \
-          -d '{"ref":"main"}'; do
-          echo "Dispatch failed, retrying..."
-          sleep 10
-        done
-
-        # Stop current workflow at 5h2m
-        sleep 60
-        kill -9 $MCS_PID || true
-        echo "Workflow stopped."
+        echo "Backup workflow completed."
