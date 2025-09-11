@@ -1,18 +1,22 @@
-name: Minecraft + ngrok + No-IP SRV (Fully Automatic)
+name: Minecraft + ngrok raw logs
 
 on:
   workflow_dispatch:
 
 jobs:
   minecraft-ngrok:
-    runs-on: ubuntu-latest-16core
-    timeout-minutes: 60
+    runs-on: ubuntu-latest
 
     steps:
-    - name: Install Java & tools
+    - name: Install tools
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y openjdk-21-jdk curl unzip jq python3
+        sudo apt-get install -y openjdk-21-jdk curl unzip
+
+    - name: Download Paper Minecraft
+      run: |
+        curl -fL -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
+        echo "eula=true" > eula.txt
 
     - name: Download and install ngrok
       run: |
@@ -20,55 +24,14 @@ jobs:
         unzip ngrok.zip
         chmod +x ngrok
         sudo mv ngrok /usr/local/bin/ngrok
-        ngrok version
-
-    - name: Download Paper Minecraft
-      run: |
-        curl -fL -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
-        echo "eula=true" > eula.txt
-
-    - name: Start Minecraft server
-      run: |
-        java -Xms2G -Xmx2G -jar paper.jar nogui &
 
     - name: Authenticate ngrok
       run: ngrok authtoken ${{ secrets.NGROK_AUTHTOKEN }}
 
-    - name: Start ngrok TCP tunnel
+    - name: Start Minecraft server and ngrok TCP tunnel
       run: |
-        ngrok tcp 25565 --log=stdout &
-        sleep 10
+        # Start Minecraft server in background
+        java -Xms16G -Xmx16G -jar paper.jar nogui &
 
-    - name: Get ngrok public TCP address
-      id: ngrok_url
-      run: |
-        NGROK_PUBLIC=$(curl --silent http://localhost:25565/api/tunnels | jq -r '.tunnels[0].public_url')
-        if [ -z "$NGROK_PUBLIC" ]; then
-          echo "Error: ngrok public address not found"
-          exit 1
-        fi
-        NGROK_HOST=$(echo $NGROK_PUBLIC | cut -d':' -f2 | sed 's|//||')
-        NGROK_PORT=$(echo $NGROK_PUBLIC | cut -d':' -f3)
-        echo "NGROK_HOST=$NGROK_HOST" >> $GITHUB_ENV
-        echo "NGROK_PORT=$NGROK_PORT" >> $GITHUB_ENV
-        echo "Ngrok TCP: $NGROK_HOST:$NGROK_PORT"
-
-    - name: Update No-IP A and SRV records
-      run: |
-        # Update No-IP A record
-        curl -s "http://${{ secrets.NOIP_USERNAME }}:${{ secrets.NOIP_PASSWORD }}@dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$NGROK_HOST" \
-             -o noip_update.log
-        cat noip_update.log
-
-        # Update No-IP SRV record
-        curl -s -X POST "https://dynupdate.no-ip.com/nic/update" \
-          -u "${{ secrets.NOIP_USERNAME }}:${{ secrets.NOIP_PASSWORD }}" \
-          -d "hostname=ecrion.ddns.net" \
-          -d "service=_minecraft._tcp" \
-          -d "port=$NGROK_PORT" \
-          -d "target=$NGROK_HOST" \
-          -o noip_srv.log
-        cat noip_srv.log
-
-    - name: Keep Minecraft server alive
-      run: sleep 3600
+        # Start ngrok TCP in foreground (raw output)
+        ngrok tcp 25565
