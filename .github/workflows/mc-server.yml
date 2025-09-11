@@ -36,7 +36,7 @@ jobs:
 
     - name: Start Minecraft server
       run: |
-        java -Xms1G -Xmx1G -jar paper.jar nogui &
+        java -Xms16G -Xmx16G -jar paper.jar nogui &
 
     - name: Start ngrok TCP tunnel
       run: |
