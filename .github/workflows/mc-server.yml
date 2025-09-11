@@ -42,7 +42,7 @@ jobs:
     - name: Get ngrok public TCP address
       id: ngrok_url
       run: |
-        NGROK_PUBLIC=$(curl --silent http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+        NGROK_PUBLIC=$(curl --silent http://localhost:25565/api/tunnels | jq -r '.tunnels[0].public_url')
         if [ -z "$NGROK_PUBLIC" ]; then
           echo "Error: ngrok public address not found"
           exit 1
