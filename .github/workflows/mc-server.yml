@@ -1,4 +1,4 @@
-name: Minecraft + ngrok + No-IP SRV (Automatic)
+name: Minecraft + ngrok + No-IP SRV (Fully Automatic)
 
 on:
   workflow_dispatch:
@@ -59,8 +59,6 @@ jobs:
         cat noip_update.log
 
         # Update No-IP SRV record automatically using their API (via JSON)
-        # SRV: _minecraft._tcp.ecrion.ddns.net -> NGROK_HOST:NGROK_PORT
-        # No-IP's SRV API supports JSON, using curl here
         curl -s -X POST "https://dynupdate.no-ip.com/nic/update" \
           -u "${NOIP_USERNAME}:${NOIP_PASSWORD}" \
           -d "hostname=ecrion.ddns.net" \
