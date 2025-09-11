@@ -1,4 +1,4 @@
-name: Test Minecraft IP via Tailscale Funnel + No-IP
+name: Minecraft + Tailscale Funnel + No-IP Test
 
 on:
   workflow_dispatch:
@@ -28,23 +28,29 @@ jobs:
         curl -fL -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
         echo "eula=true" > eula.txt
 
-    - name: Start HTTPS Funnel on allowed port 8443
+    - name: Start Minecraft server
       run: |
-        sudo tailscale funnel --bg --https 8443
+        java -Xms2G -Xmx2G -jar paper.jar nogui &
+        sleep 5
+
+    - name: Start Tailscale HTTPS Funnel targeting Minecraft
+      run: |
+        # Expose local Minecraft 25565 via Funnel on allowed HTTPS port 8443
+        sudo tailscale funnel --bg --https 8443 127.0.0.1:25565
         sleep 10
+
+        # Get Funnel hostname
         FUNNEL_URL=$(tailscale funnel status | grep "Available on the internet" | awk '{print $3}')
         echo "Funnel URL: $FUNNEL_URL"
         FUNNEL_HOST=$(echo $FUNNEL_URL | sed 's|https://||' | sed 's|/||')
 
+        # Update No-IP domain ecrion.ddns.net
         echo "Updating No-IP domain..."
-        curl -s "http://${{ secrets.NOIP_USERNAME }}:${{ secrets.NOIP_PASSWORD }}@dynupdate.no-ip.com/nic/update?hostname=ecrion.qzz.io&myip=$FUNNEL_HOST" \
+        curl -s "http://${{ secrets.NOIP_USERNAME }}:${{ secrets.NOIP_PASSWORD }}@dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$FUNNEL_HOST" \
              -o noip_update.log
         cat noip_update.log
 
-    - name: Start Minecraft server
-      run: |
-        java -Xms2G -Xmx2G -jar paper.jar nogui &
-        echo "Minecraft server started. Connect using:"
-        echo "- No-IP domain: ecrion.qzz.io:25565"
-        echo "- Funnel hostname (HTTPS 8443, internal mapping): $FUNNEL_HOST:8443"
-        sleep 3600  # keep workflow alive for testing
+        echo "You can connect Minecraft to ecrion.ddns.net:25565"
+
+    - name: Keep Minecraft server alive for testing
+      run: sleep 3600
