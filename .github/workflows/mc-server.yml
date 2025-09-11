@@ -12,12 +12,11 @@ jobs:
     - name: Install Java & tools
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y openjdk-21-jdk curl unzip zip jq python3
+        sudo apt-get install -y openjdk-21-jdk curl unzip jq python3
 
     - name: Download and install ngrok
       run: |
-        NGROK_VERSION=$(curl -s https://api.github.com/repos/ngrok/ngrok/releases/latest | jq -r '.assets[] | select(.name | test("linux-amd64.zip")) | .browser_download_url')
-        curl -sL $NGROK_VERSION -o ngrok.zip
+        curl -s https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip -o ngrok.zip
         unzip ngrok.zip
         chmod +x ngrok
         sudo mv ngrok /usr/local/bin/ngrok
