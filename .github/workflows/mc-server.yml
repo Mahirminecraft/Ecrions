@@ -1,27 +1,22 @@
-name: Minecraft + Tailscale Funnel + No-IP SRV
+name: Minecraft + ngrok + No-IP SRV (Automatic)
 
 on:
   workflow_dispatch:
 
 jobs:
-  minecraft-test:
+  minecraft-ngrok:
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
     steps:
-    - name: Install Java & Tailscale
+    - name: Install Java & ngrok
       run: |
         sudo apt-get update -y
         sudo apt-get install -y openjdk-21-jdk curl unzip zip jq
-        curl -fsSL https://tailscale.com/install.sh | sh
-
-    - name: Start Tailscale daemon
-      env:
-        TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
-      run: |
-        sudo tailscaled --state=mem:&
-        sleep 3
-        sudo tailscale up --authkey=$TAILSCALE_AUTH_KEY --hostname=mc-test-server
+        curl -s https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip -o ngrok.zip
+        unzip ngrok.zip
+        chmod +x ngrok
+        sudo mv ngrok /usr/local/bin/ngrok
 
     - name: Download Paper Minecraft
       run: |
@@ -33,32 +28,49 @@ jobs:
         java -Xms2G -Xmx2G -jar paper.jar nogui &
         sleep 5
 
-    - name: Start Tailscale Funnel and update No-IP
+    - name: Start ngrok TCP tunnel and update No-IP SRV
+      env:
+        NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+        NOIP_USERNAME: ${{ secrets.NOIP_USERNAME }}
+        NOIP_PASSWORD: ${{ secrets.NOIP_PASSWORD }}
       run: |
-        # Start Funnel in background targeting Minecraft
-        FUNNEL_OUTPUT=$(sudo tailscale funnel --bg --https 8443 127.0.0.1:25565)
-        echo "$FUNNEL_OUTPUT"
+        # Authenticate ngrok
+        ngrok authtoken $NGROK_AUTHTOKEN
 
-        # Correctly capture Funnel URL (line after "Available on the internet:")
-        FUNNEL_URL=$(echo "$FUNNEL_OUTPUT" | awk '/Available on the internet:/ {getline; print}')
-        if [ -z "$FUNNEL_URL" ]; then
-          echo "Error: Funnel hostname not found"
+        # Start ngrok TCP tunnel in background and save logs
+        ngrok tcp 25565 --region us --log=stdout > ngrok.log &
+        sleep 15
+
+        # Get public ngrok host and port automatically
+        NGROK_PUBLIC=$(grep -oP "tcp://\K[^ ]+" ngrok.log | head -n1)
+        if [ -z "$NGROK_PUBLIC" ]; then
+          echo "Error: ngrok public address not found"
           exit 1
         fi
 
-        FUNNEL_HOST=$(echo $FUNNEL_URL | sed 's|https://||' | sed 's|/||')
-        FUNNEL_PORT=8443
+        NGROK_HOST=$(echo $NGROK_PUBLIC | cut -d':' -f1)
+        NGROK_PORT=$(echo $NGROK_PUBLIC | cut -d':' -f2)
 
-        echo "Funnel hostname: $FUNNEL_HOST, port: $FUNNEL_PORT"
+        echo "ngrok public: $NGROK_HOST:$NGROK_PORT"
 
-        # Update No-IP dynamic IP
-        echo "Updating No-IP domain ecrion.ddns.net..."
-        curl -s "http://${{ secrets.NOIP_USERNAME }}:${{ secrets.NOIP_PASSWORD }}@dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$FUNNEL_HOST" \
+        # Update No-IP A record dynamically
+        curl -s "http://${NOIP_USERNAME}:${NOIP_PASSWORD}@dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$NGROK_HOST" \
              -o noip_update.log
         cat noip_update.log
 
-        echo "Set SRV record in No-IP:"
-        echo "_minecraft._tcp.ecrion.ddns.net -> $FUNNEL_HOST:$FUNNEL_PORT"
+        # Update No-IP SRV record automatically using their API (via JSON)
+        # SRV: _minecraft._tcp.ecrion.ddns.net -> NGROK_HOST:NGROK_PORT
+        # No-IP's SRV API supports JSON, using curl here
+        curl -s -X POST "https://dynupdate.no-ip.com/nic/update" \
+          -u "${NOIP_USERNAME}:${NOIP_PASSWORD}" \
+          -d "hostname=ecrion.ddns.net" \
+          -d "service=_minecraft._tcp" \
+          -d "port=${NGROK_PORT}" \
+          -d "target=${NGROK_HOST}" \
+          -o noip_srv.log
+        cat noip_srv.log
 
-    - name: Keep Minecraft server alive for testing
+        echo "Minecraft clients can now connect to ecrion.ddns.net (port handled by SRV)"
+
+    - name: Keep Minecraft server alive
       run: sleep 3600
