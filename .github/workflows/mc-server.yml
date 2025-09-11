@@ -28,12 +28,12 @@ jobs:
         curl -fL -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
         echo "eula=true" > eula.txt
 
-    - name: Start TCP Funnel on port 25565
+    - name: Start HTTPS Funnel on allowed port 8443
       run: |
-        sudo tailscale funnel --bg --tcp 25565
+        sudo tailscale funnel --bg --https 8443
         sleep 10
         FUNNEL_URL=$(tailscale funnel status | grep "Available on the internet" | awk '{print $3}')
-        echo "Funnel hostname: $FUNNEL_URL"
+        echo "Funnel URL: $FUNNEL_URL"
         FUNNEL_HOST=$(echo $FUNNEL_URL | sed 's|https://||' | sed 's|/||')
 
         echo "Updating No-IP domain..."
@@ -43,8 +43,8 @@ jobs:
 
     - name: Start Minecraft server
       run: |
-        java -Xms16G -Xmx16G -jar paper.jar nogui &
-        echo "Minecraft server started. Connect using either:"
-        echo "- Funnel hostname (TCP): $FUNNEL_HOST:25565"
+        java -Xms2G -Xmx2G -jar paper.jar nogui &
+        echo "Minecraft server started. Connect using:"
         echo "- No-IP domain: ecrion.qzz.io:25565"
+        echo "- Funnel hostname (HTTPS 8443, internal mapping): $FUNNEL_HOST:8443"
         sleep 3600  # keep workflow alive for testing
