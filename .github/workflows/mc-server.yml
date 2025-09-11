@@ -1,4 +1,4 @@
-name: Minecraft + Tailscale Funnel + No-IP Test
+name: Minecraft + Tailscale Funnel + No-IP SRV
 
 on:
   workflow_dispatch:
@@ -33,13 +33,13 @@ jobs:
         java -Xms2G -Xmx2G -jar paper.jar nogui &
         sleep 5
 
-    - name: Start Tailscale Funnel targeting Minecraft and update No-IP
+    - name: Start Tailscale Funnel and get allowed port
       run: |
-        # Start Funnel in background targeting local Minecraft
+        # Use HTTPS port allowed by Funnel (e.g., 8443)
         FUNNEL_OUTPUT=$(sudo tailscale funnel --bg --https 8443 127.0.0.1:25565)
         echo "$FUNNEL_OUTPUT"
 
-        # Extract Funnel hostname directly from output
+        # Extract Funnel hostname
         FUNNEL_URL=$(echo "$FUNNEL_OUTPUT" | grep "Available on the internet:" | awk '{print $4}')
         if [ -z "$FUNNEL_URL" ]; then
           echo "Error: Funnel hostname not found"
@@ -47,14 +47,17 @@ jobs:
         fi
 
         FUNNEL_HOST=$(echo $FUNNEL_URL | sed 's|https://||' | sed 's|/||')
+        FUNNEL_PORT=8443  # Funnel allowed port
 
-        # Update No-IP domain
-        echo "Updating No-IP domain ecrion.ddns.net..."
+        echo "Funnel hostname: $FUNNEL_HOST, port: $FUNNEL_PORT"
+
+        # Update No-IP A record to Funnel IP (dynamic IP)
         curl -s "http://${{ secrets.NOIP_USERNAME }}:${{ secrets.NOIP_PASSWORD }}@dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$FUNNEL_HOST" \
              -o noip_update.log
         cat noip_update.log
 
-        echo "You can connect Minecraft to ecrion.ddns.net:25565"
+        echo "Set SRV record in No-IP:"
+        echo "_minecraft._tcp.ecrion.ddns.net -> $FUNNEL_HOST:$FUNNEL_PORT"
 
     - name: Keep Minecraft server alive for testing
       run: sleep 3600
