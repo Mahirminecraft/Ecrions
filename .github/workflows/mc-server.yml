@@ -1,4 +1,4 @@
-name: Minecraft + ngrok + No-IP SRV (Automatic)
+name: Minecraft + ngrok + No-IP SRV (Fully Automatic)
 
 on:
   workflow_dispatch:
@@ -9,14 +9,19 @@ jobs:
     timeout-minutes: 60
 
     steps:
-    - name: Install Java & ngrok
+    - name: Install Java & tools
       run: |
         sudo apt-get update -y
         sudo apt-get install -y openjdk-21-jdk curl unzip zip jq python3
-        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.zip -o ngrok.zip
+
+    - name: Download and install ngrok
+      run: |
+        NGROK_VERSION=$(curl -s https://api.github.com/repos/ngrok/ngrok/releases/latest | jq -r '.assets[] | select(.name | test("linux-amd64.zip")) | .browser_download_url')
+        curl -sL $NGROK_VERSION -o ngrok.zip
         unzip ngrok.zip
         chmod +x ngrok
         sudo mv ngrok /usr/local/bin/ngrok
+        ./ngrok version
 
     - name: Download Paper Minecraft
       run: |
@@ -33,7 +38,7 @@ jobs:
     - name: Start ngrok TCP tunnel
       run: |
         ngrok tcp 25565 --log=stdout &
-        sleep 10  # Give ngrok time to start
+        sleep 10
 
     - name: Get ngrok public TCP address
       id: ngrok_url
@@ -43,7 +48,7 @@ jobs:
           echo "Error: ngrok public address not found"
           exit 1
         fi
-        NGROK_HOST=$(echo $NGROK_PUBLIC | cut -d':' -f2 | sed 's|//||')  # ngrok TCP URL is tcp://host:port
+        NGROK_HOST=$(echo $NGROK_PUBLIC | cut -d':' -f2 | sed 's|//||')
         NGROK_PORT=$(echo $NGROK_PUBLIC | cut -d':' -f3)
         echo "NGROK_HOST=$NGROK_HOST" >> $GITHUB_ENV
         echo "NGROK_PORT=$NGROK_PORT" >> $GITHUB_ENV
@@ -56,7 +61,7 @@ jobs:
              -o noip_update.log
         cat noip_update.log
 
-        # Update No-IP SRV record (maps _minecraft._tcp to ngrok host:port)
+        # Update No-IP SRV record
         curl -s -X POST "https://dynupdate.no-ip.com/nic/update" \
           -u "${{ secrets.NOIP_USERNAME }}:${{ secrets.NOIP_PASSWORD }}" \
           -d "hostname=ecrion.ddns.net" \
