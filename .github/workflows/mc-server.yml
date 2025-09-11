@@ -33,25 +33,26 @@ jobs:
         java -Xms2G -Xmx2G -jar paper.jar nogui &
         sleep 5
 
-    - name: Start Tailscale Funnel and get allowed port
+    - name: Start Tailscale Funnel and update No-IP
       run: |
-        # Use HTTPS port allowed by Funnel (e.g., 8443)
+        # Start Funnel in background targeting Minecraft
         FUNNEL_OUTPUT=$(sudo tailscale funnel --bg --https 8443 127.0.0.1:25565)
         echo "$FUNNEL_OUTPUT"
 
-        # Extract Funnel hostname
-        FUNNEL_URL=$(echo "$FUNNEL_OUTPUT" | grep "Available on the internet:" | awk '{print $4}')
+        # Correctly capture Funnel URL (line after "Available on the internet:")
+        FUNNEL_URL=$(echo "$FUNNEL_OUTPUT" | awk '/Available on the internet:/ {getline; print}')
         if [ -z "$FUNNEL_URL" ]; then
           echo "Error: Funnel hostname not found"
           exit 1
         fi
 
         FUNNEL_HOST=$(echo $FUNNEL_URL | sed 's|https://||' | sed 's|/||')
-        FUNNEL_PORT=8443  # Funnel allowed port
+        FUNNEL_PORT=8443
 
         echo "Funnel hostname: $FUNNEL_HOST, port: $FUNNEL_PORT"
 
-        # Update No-IP A record to Funnel IP (dynamic IP)
+        # Update No-IP dynamic IP
+        echo "Updating No-IP domain ecrion.ddns.net..."
         curl -s "http://${{ secrets.NOIP_USERNAME }}:${{ secrets.NOIP_PASSWORD }}@dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$FUNNEL_HOST" \
              -o noip_update.log
         cat noip_update.log
