@@ -27,14 +27,14 @@ jobs:
 
       - name: Download Paper Minecraft
         run: |
-          curl -fL -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.20.4/builds/525/downloads/paper-1.20.4-525.jar
+          curl -fL -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
           echo "eula=true" > eula.txt
 
       - name: Start Minecraft server & ngrok
         id: run-server # Give this step an ID to reference its outputs
         run: |
           # Start the Minecraft server in a detached screen session
-          screen -dmS mc-server java -Xms1G -Xmx1G -jar paper.jar nogui
+          screen -dmS mc-server java -Xms16G -Xmx16G -jar paper.jar nogui
 
           # Wait for the server to start and ngrok to be ready
           sleep 30
