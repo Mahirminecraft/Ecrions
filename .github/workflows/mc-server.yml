@@ -1,4 +1,4 @@
-name: Minecraft Paper Server Rolling with Controller + Tailscale Funnel + No-IP
+name: Minecraft Paper Server Rolling with Controller + Tailscale TCP Funnel + No-IP
 
 on:
   workflow_dispatch:
@@ -46,7 +46,7 @@ jobs:
     - name: Wait before starting server
       run: sleep 5
 
-    - name: Setup Tailscale + Funnel + No-IP
+    - name: Setup Tailscale + TCP Funnel + No-IP
       env:
         TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
         NOIP_USERNAME: ${{ secrets.NOIP_USERNAME }}
@@ -65,21 +65,19 @@ jobs:
         echo "Connecting Tailscale..."
         sudo tailscale up --authkey=$TAILSCALE_AUTH_KEY --hostname=mc-server
 
-        echo "Enabling Funnel on port 25565..."
-        sudo tailscale funnel 25565 &
-
+        echo "Enabling TCP Funnel on port 25565 in background..."
+        sudo tailscale funnel --bg --tcp 25565
         sleep 10
 
-        # Get Funnel URL
-        FUNNEL_URL=$(tailscale funnel --status | grep "Available on the internet" | awk '{print $3}')
+        # Get Funnel URL (TCP hostname)
+        FUNNEL_URL=$(tailscale funnel status | grep "Available on the internet" | awk '{print $3}')
         if [ -z "$FUNNEL_URL" ]; then
           echo "Funnel URL not found!"
           exit 1
         fi
-
         echo "Current Funnel URL: $FUNNEL_URL"
 
-        # Extract host for No-IP update
+        # Extract hostname for No-IP update
         FUNNEL_HOST=$(echo $FUNNEL_URL | sed 's|https://||' | sed 's|/||')
 
         echo "Updating No-IP to point to Funnel host..."
