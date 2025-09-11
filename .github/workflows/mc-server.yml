@@ -1,4 +1,4 @@
-name: Minecraft Paper Server Rolling with Controller
+name: Minecraft Paper Server Rolling with Controller + Tailscale Funnel + No-IP
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ jobs:
     - name: Install tools
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y zip unzip jq
+        sudo apt-get install -y zip unzip jq curl
 
     - name: Download Paper 1.21.8 build #58
       run: |
@@ -45,6 +45,47 @@ jobs:
 
     - name: Wait before starting server
       run: sleep 5
+
+    - name: Setup Tailscale + Funnel + No-IP
+      env:
+        TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        NOIP_USERNAME: ${{ secrets.NOIP_USERNAME }}
+        NOIP_PASSWORD: ${{ secrets.NOIP_PASSWORD }}
+        NOIP_HOSTNAME: ecrion.qzz.io
+      run: |
+        set -euo pipefail
+
+        echo "Installing Tailscale..."
+        curl -fsSL https://tailscale.com/install.sh | sh
+
+        echo "Starting tailscaled..."
+        sudo tailscaled --state=mem:&
+        sleep 3
+
+        echo "Connecting Tailscale..."
+        sudo tailscale up --authkey=$TAILSCALE_AUTH_KEY --hostname=mc-server
+
+        echo "Enabling Funnel on port 25565..."
+        sudo tailscale funnel 25565 &
+
+        # Wait a few seconds for Funnel IP to be assigned
+        sleep 10
+
+        # Get public Funnel IP
+        FUNNEL_IP=$(tailscale status --json | jq -r '.Self.FunnelIPv4 // empty')
+        if [ -z "$FUNNEL_IP" ]; then
+          echo "Funnel IP not found!"
+          exit 1
+        fi
+        echo "Current Funnel IP: $FUNNEL_IP"
+
+        # Update No-IP
+        echo "Updating No-IP to point to Funnel IP..."
+        curl -s "http://$NOIP_USERNAME:$NOIP_PASSWORD@dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOSTNAME&myip=$FUNNEL_IP" \
+             -o noip_update.log
+        cat noip_update.log
+
+        echo "Your Minecraft server should now be reachable at $NOIP_HOSTNAME:25565"
 
     - name: Run Minecraft Server with Backup & Controller
       env:
