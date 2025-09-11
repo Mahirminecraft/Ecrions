@@ -1,4 +1,4 @@
-name: Minecraft + ngrok + No-IP SRV (Fully Automatic)
+name: Minecraft + ngrok + No-IP SRV (Automatic)
 
 on:
   workflow_dispatch:
@@ -12,8 +12,8 @@ jobs:
     - name: Install Java & ngrok
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y openjdk-21-jdk curl unzip zip jq
-        curl -s https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip -o ngrok.zip
+        sudo apt-get install -y openjdk-21-jdk curl unzip zip jq python3
+        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.zip -o ngrok.zip
         unzip ngrok.zip
         chmod +x ngrok
         sudo mv ngrok /usr/local/bin/ngrok
@@ -26,49 +26,45 @@ jobs:
     - name: Start Minecraft server
       run: |
         java -Xms2G -Xmx2G -jar paper.jar nogui &
-        sleep 5
 
-    - name: Start ngrok TCP tunnel and update No-IP SRV
-      env:
-        NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
-        NOIP_USERNAME: ${{ secrets.NOIP_USERNAME }}
-        NOIP_PASSWORD: ${{ secrets.NOIP_PASSWORD }}
+    - name: Authenticate ngrok
+      run: ngrok authtoken ${{ secrets.NGROK_AUTHTOKEN }}
+
+    - name: Start ngrok TCP tunnel
       run: |
-        # Authenticate ngrok
-        ngrok authtoken $NGROK_AUTHTOKEN
+        ngrok tcp 25565 --log=stdout &
+        sleep 10  # Give ngrok time to start
 
-        # Start ngrok TCP tunnel in background and save logs
-        ngrok tcp 25565 --region us --log=stdout > ngrok.log &
-        sleep 15
-
-        # Get public ngrok host and port automatically
-        NGROK_PUBLIC=$(grep -oP "tcp://\K[^ ]+" ngrok.log | head -n1)
+    - name: Get ngrok public TCP address
+      id: ngrok_url
+      run: |
+        NGROK_PUBLIC=$(curl --silent http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
         if [ -z "$NGROK_PUBLIC" ]; then
           echo "Error: ngrok public address not found"
           exit 1
         fi
+        NGROK_HOST=$(echo $NGROK_PUBLIC | cut -d':' -f2 | sed 's|//||')  # ngrok TCP URL is tcp://host:port
+        NGROK_PORT=$(echo $NGROK_PUBLIC | cut -d':' -f3)
+        echo "NGROK_HOST=$NGROK_HOST" >> $GITHUB_ENV
+        echo "NGROK_PORT=$NGROK_PORT" >> $GITHUB_ENV
+        echo "Ngrok TCP: $NGROK_HOST:$NGROK_PORT"
 
-        NGROK_HOST=$(echo $NGROK_PUBLIC | cut -d':' -f1)
-        NGROK_PORT=$(echo $NGROK_PUBLIC | cut -d':' -f2)
-
-        echo "ngrok public: $NGROK_HOST:$NGROK_PORT"
-
-        # Update No-IP A record dynamically
-        curl -s "http://${NOIP_USERNAME}:${NOIP_PASSWORD}@dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$NGROK_HOST" \
+    - name: Update No-IP A and SRV records
+      run: |
+        # Update No-IP A record
+        curl -s "http://${{ secrets.NOIP_USERNAME }}:${{ secrets.NOIP_PASSWORD }}@dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$NGROK_HOST" \
              -o noip_update.log
         cat noip_update.log
 
-        # Update No-IP SRV record automatically using their API (via JSON)
+        # Update No-IP SRV record (maps _minecraft._tcp to ngrok host:port)
         curl -s -X POST "https://dynupdate.no-ip.com/nic/update" \
-          -u "${NOIP_USERNAME}:${NOIP_PASSWORD}" \
+          -u "${{ secrets.NOIP_USERNAME }}:${{ secrets.NOIP_PASSWORD }}" \
           -d "hostname=ecrion.ddns.net" \
           -d "service=_minecraft._tcp" \
-          -d "port=${NGROK_PORT}" \
-          -d "target=${NGROK_HOST}" \
+          -d "port=$NGROK_PORT" \
+          -d "target=$NGROK_HOST" \
           -o noip_srv.log
         cat noip_srv.log
-
-        echo "Minecraft clients can now connect to ecrion.ddns.net (port handled by SRV)"
 
     - name: Keep Minecraft server alive
       run: sleep 3600
