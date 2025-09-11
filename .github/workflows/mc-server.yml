@@ -22,12 +22,7 @@ jobs:
         ngrok version
 
     - name: Authenticate ngrok
-      run: ngrok authtoken ${{ secrets.NGROK_AUTHTOKEN }}
-
-    - name: Update ngrok agent to latest version
-      run: |
-        ngrok update
-        ngrok version
+      run: ngrok config add-authtoken ${{ secrets.NGROK_AUTHTOKEN }}
 
     - name: Download Paper Minecraft
       run: |
@@ -36,7 +31,7 @@ jobs:
 
     - name: Start Minecraft server
       run: |
-        java -Xms16G -Xmx16G -jar paper.jar nogui &
+        java -Xms1G -Xmx1G -jar paper.jar nogui &
 
     - name: Start ngrok TCP tunnel
       run: |
