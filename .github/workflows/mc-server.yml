@@ -6,7 +6,7 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 370  # a bit more than 6h for 5h2m logic
+    timeout-minutes: 370  # ~6h
 
     steps:
     - name: Checkout repository
@@ -68,20 +68,22 @@ jobs:
         echo "Enabling Funnel on port 25565..."
         sudo tailscale funnel 25565 &
 
-        # Wait a few seconds for Funnel IP to be assigned
         sleep 10
 
-        # Get public Funnel IP
-        FUNNEL_IP=$(tailscale status --json | jq -r '.Self.FunnelIPv4 // empty')
-        if [ -z "$FUNNEL_IP" ]; then
-          echo "Funnel IP not found!"
+        # Get Funnel URL
+        FUNNEL_URL=$(tailscale funnel --status | grep "Available on the internet" | awk '{print $3}')
+        if [ -z "$FUNNEL_URL" ]; then
+          echo "Funnel URL not found!"
           exit 1
         fi
-        echo "Current Funnel IP: $FUNNEL_IP"
 
-        # Update No-IP
-        echo "Updating No-IP to point to Funnel IP..."
-        curl -s "http://$NOIP_USERNAME:$NOIP_PASSWORD@dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOSTNAME&myip=$FUNNEL_IP" \
+        echo "Current Funnel URL: $FUNNEL_URL"
+
+        # Extract host for No-IP update
+        FUNNEL_HOST=$(echo $FUNNEL_URL | sed 's|https://||' | sed 's|/||')
+
+        echo "Updating No-IP to point to Funnel host..."
+        curl -s "http://$NOIP_USERNAME:$NOIP_PASSWORD@dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOSTNAME&myip=$FUNNEL_HOST" \
              -o noip_update.log
         cat noip_update.log
 
