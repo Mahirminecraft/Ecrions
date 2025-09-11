@@ -5,7 +5,7 @@ on:
 
 jobs:
   minecraft-ngrok:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-16core
     timeout-minutes: 60
 
     steps:
