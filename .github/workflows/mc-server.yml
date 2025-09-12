@@ -102,7 +102,15 @@ jobs:
         curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
           -d chat_id="$TELEGRAM_CHAT_ID" \
           -d text="$MSG"
-
+          
+    - name: Start Telegram IP/Port Bot
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        PORT: ${{ env.PORT }}
+      run: |
+        nohup bash telegram_bot.sh > telegram_bot.log 2>&1 &
+        
     - name: Run Minecraft Server with Backup & Controller
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
