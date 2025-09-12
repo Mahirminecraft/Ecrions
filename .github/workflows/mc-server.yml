@@ -34,11 +34,6 @@ jobs:
       - name: Accept EULA
         run: echo "eula=true" > eula.txt
 
-      - name: Start Minecraft server (1 hour for testing)
+      - name: Start Minecraft server (runs until job ends)
         run: |
-          # Run the server for 1 hour (3600 seconds). The command exits after 1 hour.
-          # `|| true` prevents the step from failing when timeout ends the process.
-          timeout 3600s java -Xmx2G -Xms2G -jar paper-1.21.8-58.jar nogui || true
-
-      - name: Done
-        run: echo "Server run finished (1-hour test window)."
+          java -Xmx2G -Xms2G -jar paper-1.21.8-58.jar nogui
