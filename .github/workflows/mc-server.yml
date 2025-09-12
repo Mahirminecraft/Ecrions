@@ -1,4 +1,4 @@
-name: Minecraft Paper Server Rolling with Controller
+name: Minecraft Paper Server Rolling with Controller + ngrok
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 370  # a bit more than 6h for 5h2m logic
+    timeout-minutes: 370  # ~6h10m
 
     steps:
     - name: Checkout repository
@@ -23,7 +23,7 @@ jobs:
     - name: Install tools
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y zip unzip jq
+        sudo apt-get install -y zip unzip jq curl
 
     - name: Download Paper 1.21.8 build #58
       run: |
@@ -46,9 +46,16 @@ jobs:
     - name: Wait before starting server
       run: sleep 5
 
-    - name: Run Minecraft Server with Backup & Controller
+    - name: Download and Install ngrok
+      run: |
+        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc > /dev/null
+        echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+        sudo apt-get update && sudo apt-get install -y ngrok
+
+    - name: Start Minecraft Server with Backup & Controller
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
       run: |
         set -euo pipefail
         REPO="https://$GH_PAT@github.com/${{ github.repository }}.git"
@@ -59,9 +66,23 @@ jobs:
 
         mkdir -p Backup
 
+        # Start Minecraft server
         java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
         MCS_PID=$!
 
+        # Start ngrok TCP tunnel
+        ngrok authtoken $NGROK_AUTH_TOKEN
+        nohup ngrok tcp 25565 > ngrok.log &
+        sleep 15  # wait for ngrok to initialize
+
+        # Extract ngrok public TCP URL
+        NGROK_URL=$(grep -o 'tcp://[0-9a-z\.]*:[0-9]*' ngrok.log | head -n 1)
+        echo "Minecraft Public TCP Address: $NGROK_URL"
+        echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
+
+        echo "Players can connect using: $NGROK_URL"
+
+        # Backup & controller loop
         for i in {1..10}; do
           sleep 1800
 
@@ -74,7 +95,7 @@ jobs:
             zip -r "Backup/${PART}.Backup-latest.zip" world/ plugins/ config/ || true
           done
 
-          # Sync repo with all files (overwrite/add, no deletes)
+          # Sync repo
           git add -A
           git commit -m "Backup cycle $i" || true
           until git push origin HEAD:main --force; do
