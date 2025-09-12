@@ -1,4 +1,4 @@
-name: Minecraft Paper Server with Tailscale Funnel
+name: Minecraft Paper Server with Funnel
 
 on:
   workflow_dispatch:
@@ -6,10 +6,10 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 370 # ~6h10m max workflow time
+    timeout-minutes: 370 # max ~6h10m
 
     steps:
-    - name: Checkout repository
+    - name: Checkout repo
       uses: actions/checkout@v3
 
     - name: Setup Java
@@ -26,9 +26,9 @@ jobs:
     - name: Install Tailscale
       run: |
         curl -fsSL https://tailscale.com/install.sh | sh
-        sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTHKEY }} --ssh --hostname=gh-mcserver
+        sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTHKEY }} --hostname=gh-mcserver
 
-    - name: Enable Tailscale Funnel
+    - name: Enable Funnel
       run: |
         sudo tailscale serve --bg --tcp=8443 tcp://localhost:8443
         sudo tailscale funnel --bg --tcp=8443
@@ -46,15 +46,6 @@ jobs:
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    - name: Start Minecraft Server (Controller Mode)
+    - name: Start Minecraft Server
       run: |
-        set -euo pipefail
-        mkdir -p Backup
-
-        # Start server in background
-        java -Xmx4G -Xms4G -jar paper-1.21.8-58.jar nogui &
-        MCS_PID=$!
-
-        # Keep workflow alive until killed by timeout (~6h)
-        echo "Minecraft server started with PID $MCS_PID. Waiting..."
-        wait $MCS_PID
+        java -Xmx4G -Xms4G -jar paper-1.21.8-58.jar nogui
