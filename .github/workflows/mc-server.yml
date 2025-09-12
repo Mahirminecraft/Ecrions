@@ -1,59 +1,33 @@
-name: Minecraft Server with ngrok
+name: Minecraft Server
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # run manually
+  push:
+    branches: [ main ]
 
 jobs:
-  minecraft-ngrok:
+  server:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
-
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install Tailscale
         run: |
-          sudo apt-get update
-          sudo apt-get install -y openjdk-17-jre-headless curl unzip jq screen
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTHKEY }} --ssh --hostname=gh-mcserver
 
-      - name: Download and install ngrok
+      - name: Enable Funnel for Minecraft
         run: |
-          curl -sL https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-linux-amd64.zip -o ngrok.zip
-          unzip ngrok.zip
-          chmod +x ngrok
-          sudo mv ngrok /usr/local/bin/ngrok
-          ngrok version
+          # Serve raw TCP port 25565
+          sudo tailscale serve tcp:25565 tcp://localhost:25565
+          sudo tailscale funnel 25565 on
 
-      - name: Authenticate ngrok
-        run: ngrok authtoken ${{ secrets.NGROK_AUTHTOKEN }}
-
-      - name: Download Paper Minecraft
+      - name: Download Minecraft server jar
         run: |
-          curl -fL -o paper.jar https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
+          curl -o server.jar https://piston-data.mojang.com/v1/objects/fe123456.../server.jar
           echo "eula=true" > eula.txt
 
-      - name: Run Minecraft Server with ngrok
+      - name: Start Minecraft server
         run: |
-          # Start ngrok tunnel in the background
-          ngrok tcp 25565 --log=stdout > ngrok.log &
-          sleep 10 # Give ngrok a moment to start
-
-          # Get the public URL from the ngrok API
-          NGROK_URL=$(curl --silent http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-          
-          if [ -z "$NGROK_URL" ]; then
-            echo "Failed to get ngrok URL"
-            exit 1
-          fi
-
-          echo "Minecraft server is running! Connect with: $NGROK_URL"
-          echo "ngrok_url=$NGROK_URL" >> $GITHUB_OUTPUT
-          
-          # Run the Minecraft server
-          java -Xms16G -Xmx16G -jar paper.jar nogui
-        
-      - name: Display ngrok URL
-        run: |
-          echo "The Minecraft server is now publicly accessible via this URL:"
-          echo "${{ steps.run-server.outputs.ngrok_url }}"
+          java -Xmx2G -Xms2G -jar server.jar nogui
