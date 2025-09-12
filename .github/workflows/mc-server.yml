@@ -1,7 +1,7 @@
 name: Minecraft Server
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # run manually
 
 jobs:
   server:
@@ -17,8 +17,11 @@ jobs:
 
       - name: Enable Funnel for Minecraft
         run: |
+          # Serve Minecraft on TCP 8443
           sudo tailscale serve --bg --tcp=8443 tcp://localhost:8443
-          sudo tailscale funnel 8443 --bg
+          
+          # Enable Funnel for that port
+          sudo tailscale funnel --bg --tcp=8443
 
       - name: Download Minecraft server jar
         run: |
