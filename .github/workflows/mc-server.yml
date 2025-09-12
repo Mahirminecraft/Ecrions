@@ -34,7 +34,11 @@ jobs:
         id: run-server # Give this step an ID to reference its outputs
         run: |
           # Start the Minecraft server in a detached screen session
-          screen -dmS mc-server java -Xms16G -Xmx16G -jar paper.jar nogui
+          java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
+          MCS_PID=$!
+
+          for i in {1..10}; do
+          sleep 1800
 
           # Wait for the server to start and ngrok to be ready
           sleep 30
