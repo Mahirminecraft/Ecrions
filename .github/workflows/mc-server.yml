@@ -61,6 +61,7 @@ jobs:
         nohup ngrok tcp 25565 > ngrok.log 2>&1 &
 
     - name: Get Ngrok TCP endpoint via API
+      id: ngrok
       env:
         NGROK_API_KEY: ${{ secrets.NGROK_API_KEY }}
       run: |
@@ -95,6 +96,19 @@ jobs:
         echo "### Minecraft Address" >> $GITHUB_STEP_SUMMARY
         echo "- Hostname: \`$HOST:$PORT\`" >> $GITHUB_STEP_SUMMARY
         echo "- Numeric IP: \`$IP:$PORT\`" >> $GITHUB_STEP_SUMMARY
+
+    - name: Update No-IP DNS
+      env:
+        NOIP_USERNAME: ${{ secrets.NOIP_USERNAME }}
+        NOIP_PASSWORD: ${{ secrets.NOIP_PASSWORD }}
+      run: |
+        echo "Updating No-IP domain ecrion.ddns.net → $IP ..."
+        UPDATE_URL="https://$NOIP_USERNAME:$NOIP_PASSWORD@dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$IP"
+        RESPONSE=$(curl -s "$UPDATE_URL")
+        echo "No-IP response: $RESPONSE"
+        echo "### No-IP Update" >> $GITHUB_STEP_SUMMARY
+        echo "- Domain: ecrion.ddns.net" >> $GITHUB_STEP_SUMMARY
+        echo "- Points to: $IP (Port: $PORT)" >> $GITHUB_STEP_SUMMARY
 
     - name: Keep workflow alive
       run: sleep infinity
