@@ -98,7 +98,7 @@ jobs:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         NOIP_HOST: ${{ secrets.NOIP_HOST }}
       run: |
-        MSG="🎮 Minecraft server is live at $NOIP_HOST:$PORT"
+        MSG="🎮 Minecraft server is live at ecrion.ddns.net$NOIP_HOST:$PORT"
         curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
           -d chat_id="$TELEGRAM_CHAT_ID" \
           -d text="$MSG"
