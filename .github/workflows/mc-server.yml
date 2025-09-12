@@ -1,4 +1,4 @@
-name: Minecraft Server with ngrok TCP
+name: Minecraft Paper Server with ngrok TCP
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # max 6 hours
+    timeout-minutes: 360  # ~6 hours max
 
     steps:
     - name: Checkout repository
@@ -42,20 +42,24 @@ jobs:
         echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
         sudo apt-get update && sudo apt-get install -y ngrok
 
-    - name: Start Minecraft Server
+    - name: Run Minecraft Server + ngrok
+      env:
+        NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
       run: |
-        nohup java -Xms2G -Xmx2G -jar paper-1.21.8-58.jar nogui > mc.log 2>&1 &
-        echo $! > mc.pid
+        set -euo pipefail
 
-    - name: Start ngrok TCP tunnel
-      run: |
-        ngrok authtoken "${{ secrets.NGROK_AUTH_TOKEN }}"
-        nohup ngrok tcp 25565 > ngrok.log 2>&1 &
-        sleep 15
+        echo "Starting Minecraft server..."
+        java -Xms2G -Xmx2G -jar paper-1.21.8-58.jar nogui &
+
+        echo "Starting ngrok TCP tunnel..."
+        ngrok authtoken "$NGROK_AUTHTOKEN"
+        ngrok tcp 25565 > ngrok.log 2>&1 &
+
+        sleep 15  # wait for ngrok to initialize
+
         NGROK_URL=$(grep -o 'tcp://[0-9a-z\.]*:[0-9]*' ngrok.log | head -n 1)
-        echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
         echo "Minecraft Public TCP Address: $NGROK_URL"
+        echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
 
-    - name: Keep Minecraft running
-      run: |
-        wait $(cat mc.pid)
+        # Keep workflow alive so Minecraft & ngrok keep running
+        tail -f /dev/null
