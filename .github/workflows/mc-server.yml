@@ -1,9 +1,7 @@
 name: Minecraft Server
 
 on:
-  workflow_dispatch: # run manually
-  push:
-    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   server:
@@ -19,9 +17,8 @@ jobs:
 
       - name: Enable Funnel for Minecraft
         run: |
-          # Serve raw TCP port 25565
-          sudo tailscale serve tcp:25565 tcp://localhost:25565
-          sudo tailscale funnel 25565 on
+          sudo tailscale serve --bg --tcp=25565 tcp://localhost:25565
+          sudo tailscale funnel 25565 --bg
 
       - name: Download Minecraft server jar
         run: |
