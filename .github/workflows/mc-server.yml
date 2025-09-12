@@ -1,4 +1,4 @@
-name: Minecraft Paper Server Rolling with Controller + ngrok
+name: Minecraft Paper Server Rolling with ngrok
 
 on:
   workflow_dispatch:
@@ -52,14 +52,15 @@ jobs:
         echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
         sudo apt-get update && sudo apt-get install -y ngrok
 
-    - name: Start Minecraft Server with Backup & Controller
+    - name: Run Minecraft Server with Backup & ngrok
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
       run: |
+        #!/bin/bash
         set -euo pipefail
-        REPO="https://$GH_PAT@github.com/${{ github.repository }}.git"
 
+        REPO="https://$GH_PAT@github.com/${{ github.repository }}.git"
         git config --global user.name "Auto Save Bot"
         git config --global user.email "autosave@github.com"
         git remote set-url origin "$REPO"
@@ -104,10 +105,9 @@ jobs:
           done
         done
 
-        echo "=== Final backup at 5h ==="
+        # Final backup
         FINAL_ZIP="Backup/minecraft-backup-final.zip"
         zip -r "$FINAL_ZIP" world/ plugins/ config/ || true
-
         git add -A
         git commit -m "Final backup" || true
         until git push origin HEAD:main --force; do
@@ -123,7 +123,7 @@ jobs:
           -d "{\"tag_name\":\"$TAG\",\"name\":\"Final backup $TAG\",\"body\":\"Auto backup\"}" \
           https://api.github.com/repos/${{ github.repository }}/releases
 
-        # Trigger new workflow (5h1m)
+        # Trigger new workflow
         sleep 60
         until curl -s -X POST \
           -H "Authorization: token $GH_PAT" \
@@ -134,7 +134,7 @@ jobs:
           sleep 10
         done
 
-        # Stop current workflow at 5h2m
+        # Stop current workflow
         sleep 60
         kill -9 $MCS_PID || true
         echo "Workflow stopped."
