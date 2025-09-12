@@ -21,7 +21,7 @@ jobs:
     - name: Install tools
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y zip unzip curl jq
+        sudo apt-get install -y zip unzip curl jq dnsutils
 
     - name: Download Paper 1.21.8 build #58
       run: |
@@ -59,40 +59,42 @@ jobs:
         echo "Starting ngrok TCP tunnel..."
         ngrok authtoken "$NGROK_AUTHTOKEN"
         nohup ngrok tcp 25565 > ngrok.log 2>&1 &
-        sleep 5
 
-    - name: Show Ngrok TCP endpoint via API
+    - name: Get Ngrok TCP endpoint via API
       env:
         NGROK_API_KEY: ${{ secrets.NGROK_API_KEY }}
       run: |
         echo "Fetching Ngrok tunnel info from API..."
-        sleep 10  # wait for tunnel to register
+        sleep 10
 
         RESPONSE=$(curl -s -H "Authorization: Bearer $NGROK_API_KEY" \
           -H "Ngrok-Version: 2" \
           https://api.ngrok.com/tunnels)
 
-        echo "Full API response:"
-        echo "$RESPONSE" | jq .
-
         NGROK_URL=$(echo "$RESPONSE" | jq -r '.tunnels[] | select(.public_url | startswith("tcp://")) | .public_url' | head -n 1)
 
         if [ -z "$NGROK_URL" ]; then
-          echo "❌ No TCP tunnel found (might be free plan limitation)"
+          echo "❌ No TCP tunnel found"
           exit 1
         fi
 
         HOST=$(echo "$NGROK_URL" | cut -d'/' -f3 | cut -d':' -f1)
         PORT=$(echo "$NGROK_URL" | cut -d':' -f3)
 
+        # Resolve hostname → numeric IP
+        IP=$(dig +short $HOST | head -n 1)
+
         echo "✅ Ngrok TCP Endpoint: $HOST:$PORT"
+        echo "✅ Numeric IP: $IP:$PORT"
 
         echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
         echo "HOST=$HOST" >> $GITHUB_ENV
         echo "PORT=$PORT" >> $GITHUB_ENV
+        echo "IP=$IP" >> $GITHUB_ENV
 
         echo "### Minecraft Address" >> $GITHUB_STEP_SUMMARY
-        echo "\`$HOST:$PORT\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Hostname: \`$HOST:$PORT\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Numeric IP: \`$IP:$PORT\`" >> $GITHUB_STEP_SUMMARY
 
     - name: Keep workflow alive
       run: sleep infinity
