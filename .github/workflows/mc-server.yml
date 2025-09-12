@@ -47,32 +47,31 @@ jobs:
         echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
         sudo apt-get update && sudo apt-get install -y ngrok
 
+    - name: Start Minecraft server
+      run: |
+        echo "Starting Minecraft server..."
+        nohup java -Xms2G -Xmx2G -jar paper-1.21.8-58.jar nogui > mc.log 2>&1 &
+
     - name: Start ngrok TCP tunnel
       env:
         NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
       run: |
+        echo "Starting ngrok TCP tunnel..."
         ngrok authtoken "$NGROK_AUTHTOKEN"
         nohup ngrok tcp 25565 > ngrok.log 2>&1 &
-        sleep 15
-        NGROK_URL=$(grep -o 'tcp://[0-9a-z\.]*:[0-9]*' ngrok.log | head -n 1)
+
+        # Wait for ngrok to generate TCP URL
+        echo "Waiting for ngrok TCP URL..."
+        for i in {1..20}; do
+          NGROK_URL=$(grep -o 'tcp://[0-9a-z\.]*:[0-9]*' ngrok.log | head -n 1)
+          if [ ! -z "$NGROK_URL" ]; then
+            break
+          fi
+          sleep 3
+        done
+
         echo "Minecraft Public TCP Address: $NGROK_URL"
         echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
 
-    - name: Run Minecraft Server with Backup
-      env:
-        GH_PAT: ${{ secrets.GH_PAT }}
-      run: |
-        set -euo pipefail
-        REPO="https://$GH_PAT@github.com/${{ github.repository }}.git"
-
-        git config --global user.name "Auto Save Bot"
-        git config --global user.email "autosave@github.com"
-        git remote set-url origin "$REPO"
-
-        mkdir -p Backup
-
-        # Start Minecraft in background
-        java -Xms2G -Xmx2G -jar paper-1.21.8-58.jar nogui &
-
-        # Keep workflow alive
-        tail -f /dev/null
+    - name: Keep workflow alive
+      run: sleep infinity
