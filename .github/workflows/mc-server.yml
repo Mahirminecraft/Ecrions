@@ -1,4 +1,4 @@
-name: Minecraft Paper Server with ngrok TCP
+name: Minecraft Paper Server Rolling with Controller + ngrok/No-IP
 
 on:
   workflow_dispatch:
@@ -6,13 +6,15 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # ~6 hours
+    timeout-minutes: 370  # a bit more than 6h for 5h2m logic
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
+      with:
+        persist-credentials: false
 
-    - name: Setup Java 21
+    - name: Setup Java
       uses: actions/setup-java@v3
       with:
         distribution: temurin
@@ -21,7 +23,7 @@ jobs:
     - name: Install tools
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y zip unzip curl jq dnsutils
+        sudo apt-get install -y zip unzip jq curl dnsutils
 
     - name: Download Paper 1.21.8 build #58
       run: |
@@ -47,28 +49,24 @@ jobs:
         echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
         sudo apt-get update && sudo apt-get install -y ngrok
 
-    - name: Start Minecraft server
+    - name: Start Minecraft Server
       run: |
         echo "Starting Minecraft server..."
-        nohup java -Xms2G -Xmx2G -jar paper-1.21.8-58.jar nogui > mc.log 2>&1 &
+        java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
+        echo $! > mc.pid
 
     - name: Start ngrok TCP tunnel
       env:
         NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
       run: |
-        echo "Starting ngrok TCP tunnel..."
         ngrok authtoken "$NGROK_AUTHTOKEN"
         nohup ngrok tcp 25565 > ngrok.log 2>&1 &
-        sleep 5
+        sleep 10
 
-    - name: Get Ngrok TCP endpoint via API
-      id: ngrok
+    - name: Fetch ngrok TCP endpoint and numeric IP
       env:
         NGROK_API_KEY: ${{ secrets.NGROK_API_KEY }}
       run: |
-        echo "Fetching Ngrok tunnel info from API..."
-        sleep 10
-
         RESPONSE=$(curl -s -H "Authorization: Bearer $NGROK_API_KEY" \
           -H "Ngrok-Version: 2" \
           https://api.ngrok.com/tunnels)
@@ -82,8 +80,6 @@ jobs:
 
         HOST=$(echo "$NGROK_URL" | cut -d'/' -f3 | cut -d':' -f1)
         PORT=$(echo "$NGROK_URL" | cut -d':' -f3)
-
-        # Resolve hostname → numeric IP
         IP=$(dig +short $HOST | head -n 1)
 
         echo "✅ Ngrok TCP Endpoint: $HOST:$PORT"
@@ -98,21 +94,84 @@ jobs:
         echo "- Hostname: \`$HOST:$PORT\`" >> $GITHUB_STEP_SUMMARY
         echo "- Numeric IP: \`$IP:$PORT\`" >> $GITHUB_STEP_SUMMARY
 
-    - name: Update No-IP DNS
+    - name: Setup No-IP Dynamic DNS
       env:
-        NOIP_USERNAME: ${{ secrets.NOIP_USERNAME }}
-        NOIP_PASSWORD: ${{ secrets.NOIP_PASSWORD }}
-        HOST: ${{ env.HOST }}
-        IP: ${{ env.IP }}
-        PORT: ${{ env.PORT }}
+        NOIP_USER: ${{ secrets.NOIP_USER }}
+        NOIP_PASS: ${{ secrets.NOIP_PASS }}
+        NOIP_HOST: ${{ secrets.NOIP_HOST }}
       run: |
-        echo "Updating No-IP domain ecrion.ddns.net → $IP ..."
-        UPDATE_URL="http://dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$IP"
-        RESPONSE=$(curl -s --fail -u "$NOIP_USERNAME:$NOIP_PASSWORD" -A "GitHub-Actions-NoIP-Client/1.0" "$UPDATE_URL") || true
-        echo "No-IP response: $RESPONSE"
-        echo "### No-IP Update" >> $GITHUB_STEP_SUMMARY
-        echo "- Domain: ecrion.ddns.net" >> $GITHUB_STEP_SUMMARY
-        echo "- Points to: $IP (Port: $PORT)" >> $GITHUB_STEP_SUMMARY
+        echo "Updating No-IP domain $NOIP_HOST → $IP"
+        curl -s -u "$NOIP_USER:$NOIP_PASS" "http://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$IP" || true
 
-    - name: Keep workflow alive
+    - name: Run Minecraft Server with Backup & Controller
+      env:
+        GH_PAT: ${{ secrets.GH_PAT }}
+      run: |
+        set -euo pipefail
+        REPO="https://$GH_PAT@github.com/${{ github.repository }}.git"
+
+        git config --global user.name "Auto Save Bot"
+        git config --global user.email "autosave@github.com"
+        git remote set-url origin "$REPO"
+
+        mkdir -p Backup
+
+        # Start backup cycles (every 30 min ×10 cycles)
+        for i in {1..10}; do
+          sleep 1800
+
+          echo "=== Backup cycle $i ==="
+
+          # Rotate backups
+          for PART in {1..4}; do
+            [ -f "Backup/${PART}.Backup-previous.zip" ] && rm -f "Backup/${PART}.Backup-previous.zip"
+            [ -f "Backup/${PART}.Backup-latest.zip" ] && mv "Backup/${PART}.Backup-latest.zip" "Backup/${PART}.Backup-previous.zip"
+            zip -r "Backup/${PART}.Backup-latest.zip" world/ plugins/ config/ || true
+          done
+
+          # Sync repo with all files
+          git add -A
+          git commit -m "Backup cycle $i" || true
+          until git push origin HEAD:main --force; do
+            echo "Push failed, retrying in 10s..."
+            sleep 10
+          done
+        done
+
+        echo "=== Final backup at 5h ==="
+        FINAL_ZIP="Backup/minecraft-backup-final.zip"
+        zip -r "$FINAL_ZIP" world/ plugins/ config/ || true
+
+        git add -A
+        git commit -m "Final backup" || true
+        until git push origin HEAD:main --force; do
+          echo "Final push failed, retrying..."
+          sleep 10
+        done
+
+        # Create release
+        TAG="backup-$(date -u +%Y%m%dT%H%M%SZ)"
+        curl -s -X POST \
+          -H "Authorization: token $GH_PAT" \
+          -H "Content-Type: application/json" \
+          -d "{\"tag_name\":\"$TAG\",\"name\":\"Final backup $TAG\",\"body\":\"Auto backup\"}" \
+          https://api.github.com/repos/${{ github.repository }}/releases
+
+        # Trigger new workflow (5h1m)
+        sleep 60
+        until curl -s -X POST \
+          -H "Authorization: token $GH_PAT" \
+          -H "Accept: application/vnd.github+json" \
+          https://api.github.com/repos/${{ github.repository }}/actions/workflows/mc-server.yml/dispatches \
+          -d '{"ref":"main"}'; do
+          echo "Dispatch failed, retrying..."
+          sleep 10
+        done
+
+        # Stop current workflow at 5h2m
+        sleep 60
+        kill -9 $(cat mc.pid) || true
+        echo "Workflow stopped."
+
+    - name: Keep workflow alive (fallback)
       run: sleep infinity
