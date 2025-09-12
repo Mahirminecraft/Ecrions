@@ -1,39 +1,60 @@
-name: Minecraft Server
+name: Minecraft Paper Server with Tailscale Funnel
 
 on:
-  workflow_dispatch: # run manually
+  workflow_dispatch:
 
 jobs:
-  server:
+  minecraft:
     runs-on: ubuntu-latest
+    timeout-minutes: 370 # ~6h10m max workflow time
+
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v3
 
-      - name: Install Tailscale
-        run: |
-          curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTHKEY }} --ssh --hostname=gh-mcserver
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: temurin
+        java-version: '21'
 
-      - name: Enable Funnel for Minecraft
-        run: |
-          # Serve Minecraft on TCP 8443 and enable Funnel
-          sudo tailscale serve --bg --tcp=8443 tcp://localhost:8443
-          sudo tailscale funnel --bg --tcp=8443
+    - name: Install tools
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y zip unzip jq curl
 
-      - name: Download Paper 1.21.8 build #58
-        run: |
-          while [ ! -f paper-1.21.8-58.jar ]; do
-            curl -fL -o paper-1.21.8-58.jar \
-              https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar \
-              && break
-            echo "Download failed, retrying in 15s..."
-            sleep 15
-          done
+    - name: Install Tailscale
+      run: |
+        curl -fsSL https://tailscale.com/install.sh | sh
+        sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTHKEY }} --ssh --hostname=gh-mcserver
 
-      - name: Accept EULA
-        run: echo "eula=true" > eula.txt
+    - name: Enable Tailscale Funnel
+      run: |
+        sudo tailscale serve --bg --tcp=8443 tcp://localhost:8443
+        sudo tailscale funnel --bg --tcp=8443
 
-      - name: Start Minecraft server (runs until job ends)
-        run: |
-          java -Xmx2G -Xms2G -jar paper-1.21.8-58.jar nogui
+    - name: Download Paper 1.21.8 build #58
+      run: |
+        while [ ! -f paper-1.21.8-58.jar ]; do
+          curl -fL -o paper-1.21.8-58.jar \
+            https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar \
+            && break
+          echo "Download failed, retrying in 15s..."
+          sleep 15
+        done
+
+    - name: Accept EULA
+      run: echo "eula=true" > eula.txt
+
+    - name: Start Minecraft Server (Controller Mode)
+      run: |
+        set -euo pipefail
+        mkdir -p Backup
+
+        # Start server in background
+        java -Xmx4G -Xms4G -jar paper-1.21.8-58.jar nogui &
+        MCS_PID=$!
+
+        # Keep workflow alive until killed by timeout (~6h)
+        echo "Minecraft server started with PID $MCS_PID. Waiting..."
+        wait $MCS_PID
