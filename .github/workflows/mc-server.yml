@@ -23,11 +23,19 @@ jobs:
           # Enable Funnel for that port
           sudo tailscale funnel --bg --tcp=8443
 
-      - name: Download Minecraft server jar
+      - name: Download Paper 1.21.8 build #58
         run: |
-          curl -o server.jar https://piston-data.mojang.com/v1/objects/fe123456.../server.jar
-          echo "eula=true" > eula.txt
+          while [ ! -f paper-1.21.8-58.jar ]; do
+            curl -fL -o paper-1.21.8-58.jar \
+              https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar \
+              && break
+            echo "Download failed, retrying in 15s..."
+            sleep 15
+          done
+
+      - name: Accept EULA
+        run: echo "eula=true" > eula.txt
 
       - name: Start Minecraft server
         run: |
-          java -Xmx2G -Xms2G -jar server.jar nogui
+          java -Xmx2G -Xms2G -jar paper-1.21.8-58.jar nogui
