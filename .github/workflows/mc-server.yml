@@ -1,4 +1,4 @@
-name: Minecraft Paper Server Rolling with Controller + ngrok/No-IP
+name: Minecraft Paper Server Rolling with Controller + ngrok/No-IP + Telegram
 
 on:
   workflow_dispatch:
@@ -63,7 +63,7 @@ jobs:
         nohup ngrok tcp 25565 > ngrok.log 2>&1 &
         sleep 10
 
-    - name: Fetch ngrok TCP endpoint and numeric IP
+    - name: Fetch ngrok TCP port
       env:
         NGROK_API_KEY: ${{ secrets.NGROK_API_KEY }}
       run: |
@@ -78,21 +78,10 @@ jobs:
           exit 1
         fi
 
-        HOST=$(echo "$NGROK_URL" | cut -d'/' -f3 | cut -d':' -f1)
         PORT=$(echo "$NGROK_URL" | cut -d':' -f3)
-        IP=$(dig +short $HOST | head -n 1)
 
-        echo "✅ Ngrok TCP Endpoint: $HOST:$PORT"
-        echo "✅ Numeric IP: $IP:$PORT"
-
-        echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
-        echo "HOST=$HOST" >> $GITHUB_ENV
+        echo "✅ Ngrok TCP port: $PORT"
         echo "PORT=$PORT" >> $GITHUB_ENV
-        echo "IP=$IP" >> $GITHUB_ENV
-
-        echo "### Minecraft Address" >> $GITHUB_STEP_SUMMARY
-        echo "- Hostname: \`$HOST:$PORT\`" >> $GITHUB_STEP_SUMMARY
-        echo "- Numeric IP: \`$IP:$PORT\`" >> $GITHUB_STEP_SUMMARY
 
     - name: Setup No-IP Dynamic DNS
       env:
@@ -100,8 +89,19 @@ jobs:
         NOIP_PASS: ${{ secrets.NOIP_PASS }}
         NOIP_HOST: ${{ secrets.NOIP_HOST }}
       run: |
-        echo "Updating No-IP domain $NOIP_HOST → $IP"
-        curl -s -u "$NOIP_USER:$NOIP_PASS" "http://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$IP" || true
+        echo "Updating No-IP domain $NOIP_HOST → ecrion.ddns.net"
+        curl -s -u "$NOIP_USER:$NOIP_PASS" "http://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST" || true
+
+    - name: Send Telegram Notification
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        NOIP_HOST: ${{ secrets.NOIP_HOST }}
+      run: |
+        MSG="🎮 Minecraft server is live at $NOIP_HOST:$PORT"
+        curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+          -d chat_id="$TELEGRAM_CHAT_ID" \
+          -d text="$MSG"
 
     - name: Run Minecraft Server with Backup & Controller
       env:
