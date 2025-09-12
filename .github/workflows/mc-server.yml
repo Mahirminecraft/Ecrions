@@ -17,8 +17,8 @@ jobs:
 
       - name: Enable Funnel for Minecraft
         run: |
-          sudo tailscale serve --bg --tcp=25565 tcp://localhost:25565
-          sudo tailscale funnel 25565 --bg
+          sudo tailscale serve --bg --tcp=8443 tcp://localhost:8443
+          sudo tailscale funnel 8443 --bg
 
       - name: Download Minecraft server jar
         run: |
