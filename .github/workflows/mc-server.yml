@@ -62,16 +62,35 @@ jobs:
 
         # Wait for ngrok to generate TCP URL
         echo "Waiting for ngrok TCP URL..."
-        for i in {1..20}; do
-          NGROK_URL=$(grep -o 'tcp://[0-9a-z\.]*:[0-9]*' ngrok.log | head -n 1)
+        for i in {1..30}; do
+          NGROK_URL=$(grep -o 'tcp://[0-9a-zA-Z\.\-]*:[0-9]*' ngrok.log | head -n 1)
           if [ ! -z "$NGROK_URL" ]; then
             break
           fi
-          sleep 3
+          sleep 2
         done
 
         echo "Minecraft Public TCP Address: $NGROK_URL"
         echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
+
+        HOST=$(echo $NGROK_URL | sed -E 's#tcp://([^:]+):.*#\1#')
+        PORT=$(echo $NGROK_URL | sed -E 's#tcp://[^:]+:(.*)#\1#')
+
+        echo "HOST=$HOST" >> $GITHUB_ENV
+        echo "PORT=$PORT" >> $GITHUB_ENV
+
+    - name: Update No-IP record
+      env:
+        NOIP_USER: ${{ secrets.NOIP_USERNAME }}
+        NOIP_PASS: ${{ secrets.NOIP_PASSWORD }}
+        NOIP_HOST: ecrion.ddns.net
+      run: |
+        echo "Updating No-IP with host $HOST ..."
+        curl -s -u "$NOIP_USER:$NOIP_PASS" \
+          "http://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$HOST"
+
+        echo "✅ No-IP updated: $NOIP_HOST → $HOST"
+        echo "⚠️ Remember: players must still use port $PORT"
 
     - name: Keep workflow alive
       run: sleep infinity
