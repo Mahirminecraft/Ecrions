@@ -59,6 +59,7 @@ jobs:
         echo "Starting ngrok TCP tunnel..."
         ngrok authtoken "$NGROK_AUTHTOKEN"
         nohup ngrok tcp 25565 > ngrok.log 2>&1 &
+        sleep 5
 
     - name: Get Ngrok TCP endpoint via API
       id: ngrok
@@ -101,10 +102,13 @@ jobs:
       env:
         NOIP_USERNAME: ${{ secrets.NOIP_USERNAME }}
         NOIP_PASSWORD: ${{ secrets.NOIP_PASSWORD }}
+        HOST: ${{ env.HOST }}
+        IP: ${{ env.IP }}
+        PORT: ${{ env.PORT }}
       run: |
         echo "Updating No-IP domain ecrion.ddns.net → $IP ..."
-        UPDATE_URL="https://$NOIP_USERNAME:$NOIP_PASSWORD@dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$IP"
-        RESPONSE=$(curl -s "$UPDATE_URL")
+        UPDATE_URL="http://dynupdate.no-ip.com/nic/update?hostname=ecrion.ddns.net&myip=$IP"
+        RESPONSE=$(curl -s --fail -u "$NOIP_USERNAME:$NOIP_PASSWORD" -A "GitHub-Actions-NoIP-Client/1.0" "$UPDATE_URL") || true
         echo "No-IP response: $RESPONSE"
         echo "### No-IP Update" >> $GITHUB_STEP_SUMMARY
         echo "- Domain: ecrion.ddns.net" >> $GITHUB_STEP_SUMMARY
