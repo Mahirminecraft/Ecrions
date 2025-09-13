@@ -49,7 +49,7 @@ remote:
   address: auto
   # The port of the remote (Java Edition) server
   # For plugin versions, if address has been set to "auto", the port will also follow the server's listening port.
-  port: 25565
+  port: 5997
   # Authentication type. Can be offline, online, or floodgate (see https://github.com/GeyserMC/Geyser/wiki/Floodgate).
   # For plugin versions, it's recommended to keep the `address` field to "auto" so Floodgate support is automatically configured.
   # If Floodgate is installed and `address:` is set to "auto", then "auth-type: floodgate" will automatically be used.
