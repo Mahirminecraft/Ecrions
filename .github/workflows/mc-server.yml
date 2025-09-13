@@ -1,4 +1,4 @@
-name: Minecraft Paper Server Rolling with Controller + ngrok/No-IP + Telegram
+name: Minecraft Paper Server Rolling with Controller + ngrok/No-IP
 
 on:
   workflow_dispatch:
@@ -63,7 +63,7 @@ jobs:
         nohup ngrok tcp 25565 > ngrok.log 2>&1 &
         sleep 10
 
-    - name: Fetch ngrok TCP port
+    - name: Fetch ngrok TCP endpoint and numeric IP
       env:
         NGROK_API_KEY: ${{ secrets.NGROK_API_KEY }}
       run: |
@@ -78,39 +78,40 @@ jobs:
           exit 1
         fi
 
+        HOST=$(echo "$NGROK_URL" | cut -d'/' -f3 | cut -d':' -f1)
         PORT=$(echo "$NGROK_URL" | cut -d':' -f3)
 
-        echo "✅ Ngrok TCP port: $PORT"
+        # Try to resolve numeric IP, fallback to hostname
+        IP=$(dig +short $HOST | head -n 1)
+        if [ -z "$IP" ]; then
+          echo "⚠️ dig failed, using hostname instead"
+          IP=$HOST
+        fi
+
+        echo "✅ Ngrok TCP Endpoint: $HOST:$PORT"
+        echo "✅ Resolved IP/Host: $IP:$PORT"
+
+        echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
+        echo "HOST=$HOST" >> $GITHUB_ENV
         echo "PORT=$PORT" >> $GITHUB_ENV
+        echo "IP=$IP" >> $GITHUB_ENV
+
+        echo "### Minecraft Address" >> $GITHUB_STEP_SUMMARY
+        echo "- Hostname: \`$HOST:$PORT\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Resolved IP/Host: \`$IP:$PORT\`" >> $GITHUB_STEP_SUMMARY
 
     - name: Setup No-IP Dynamic DNS
       env:
         NOIP_USER: ${{ secrets.NOIP_USER }}
         NOIP_PASS: ${{ secrets.NOIP_PASS }}
         NOIP_HOST: ${{ secrets.NOIP_HOST }}
+        IP: ${{ env.IP }}
       run: |
-        echo "Updating No-IP domain $NOIP_HOST → ecrion.ddns.net"
-        curl -s -u "$NOIP_USER:$NOIP_PASS" "http://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST" || true
+        echo "Updating No-IP domain $NOIP_HOST → $IP"
+        RESPONSE=$(curl -s -u "$NOIP_USER:$NOIP_PASS" \
+          "http://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$IP")
+        echo "No-IP Response: $RESPONSE"
 
-    - name: Send Telegram Notification
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        NOIP_HOST: ${{ secrets.NOIP_HOST }}
-      run: |
-        MSG="🎮 Minecraft server is live at ecrion.ddns.net$NOIP_HOST:$PORT"
-        curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-          -d chat_id="$TELEGRAM_CHAT_ID" \
-          -d text="$MSG"
-          
-    - name: Start Telegram IP/Port Bot
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        PORT: ${{ env.PORT }}
-      run: |
-        nohup bash telegram_bot.sh > telegram_bot.log 2>&1 &
-        
     - name: Run Minecraft Server with Backup & Controller
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
