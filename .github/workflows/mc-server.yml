@@ -6,7 +6,7 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 370  # a bit more than 6h for 5h2m logic
+    timeout-minutes: 370  # a bit more than 6h for 5h2m auto-restart logic
 
     steps:
     - name: Checkout repository
@@ -23,7 +23,7 @@ jobs:
     - name: Install tools
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y zip unzip jq curl dnsutils netcat
+        sudo apt-get install -y zip unzip jq curl dnsutils netcat-openbsd
 
     - name: Download Paper 1.21.8 build #58
       run: |
@@ -52,10 +52,10 @@ jobs:
     - name: Start Minecraft Server
       run: |
         echo "Starting Minecraft server..."
-        # Start server in background and stream logs to console
+        # Show logs in GitHub Actions console
         java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui | tee mc.log &
         echo $! > mc.pid
-        sleep 10  # allow server to initialize
+        sleep 10
 
     - name: Start ngrok TCP tunnel
       env:
@@ -74,7 +74,6 @@ jobs:
           https://api.ngrok.com/tunnels)
 
         NGROK_URL=$(echo "$RESPONSE" | jq -r '.tunnels[] | select(.public_url | startswith("tcp://")) | .public_url' | head -n 1)
-
         if [ -z "$NGROK_URL" ]; then
           echo "❌ No TCP tunnel found"
           exit 1
@@ -112,13 +111,11 @@ jobs:
         NOIP_HOST: ${{ secrets.NOIP_HOSTNAME }}
         PORT: ${{ env.PORT }}
       run: |
-        # Send startup message
         MESSAGE="🎮 Minecraft server is LIVE!\n\nConnect at:\n🌐 $NOIP_HOST:$PORT"
         curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
           -d chat_id="$TELEGRAM_CHAT_ID" \
           -d text="$MESSAGE"
 
-        # Start listener for /ip or /port commands
         nohup bash -c '
         OFFSET=0
         while true; do
@@ -141,7 +138,7 @@ jobs:
         done
         ' >/dev/null 2>&1 &
 
-    - name: Run Minecraft Server with Backup & Controller
+    - name: Run Minecraft Server with Backup & Auto-Restart
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
       run: |
@@ -154,20 +151,14 @@ jobs:
 
         mkdir -p Backup
 
-        # Start backup cycles (every 30 min ×10 cycles)
         for i in {1..10}; do
           sleep 1800
-
           echo "=== Backup cycle $i ==="
-
-          # Rotate backups
           for PART in {1..4}; do
             [ -f "Backup/${PART}.Backup-previous.zip" ] && rm -f "Backup/${PART}.Backup-previous.zip"
             [ -f "Backup/${PART}.Backup-latest.zip" ] && mv "Backup/${PART}.Backup-latest.zip" "Backup/${PART}.Backup-previous.zip"
             zip -r "Backup/${PART}.Backup-latest.zip" world/ plugins/ config/ || true
           done
-
-          # Sync repo with all files
           git add -A
           git commit -m "Backup cycle $i" || true
           until git push origin HEAD:main --force; do
@@ -179,7 +170,6 @@ jobs:
         echo "=== Final backup at 5h ==="
         FINAL_ZIP="Backup/minecraft-backup-final.zip"
         zip -r "$FINAL_ZIP" world/ plugins/ config/ || true
-
         git add -A
         git commit -m "Final backup" || true
         until git push origin HEAD:main --force; do
@@ -187,7 +177,6 @@ jobs:
           sleep 10
         done
 
-        # Create release
         TAG="backup-$(date -u +%Y%m%dT%H%M%SZ)"
         curl -s -X POST \
           -H "Authorization: token $GH_PAT" \
@@ -195,8 +184,8 @@ jobs:
           -d "{\"tag_name\":\"$TAG\",\"name\":\"Final backup $TAG\",\"body\":\"Auto backup\"}" \
           https://api.github.com/repos/${{ github.repository }}/releases
 
-        # Trigger new workflow (5h1m)
         sleep 60
+        # Trigger workflow auto-restart after 5h1m
         until curl -s -X POST \
           -H "Authorization: token $GH_PAT" \
           -H "Accept: application/vnd.github+json" \
@@ -206,7 +195,6 @@ jobs:
           sleep 10
         done
 
-        # Stop current workflow at 5h2m
         sleep 60
         kill -9 $(cat mc.pid) || true
         echo "Workflow stopped."
@@ -235,7 +223,6 @@ jobs:
         run: |
           REPO="https://$GH_PAT@github.com/${{ github.repository }}.git"
           git remote set-url origin "$REPO"
-
           git add -A
           git commit -m "Final sync after manual stop" || true
           git push origin HEAD:main --force || true
