@@ -210,3 +210,29 @@ jobs:
 
     - name: Keep workflow alive (fallback)
       run: sleep infinity
+
+  save-on-cancel:
+    runs-on: ubuntu-latest
+    needs: minecraft
+    if: ${{ cancelled() || failure() || success() }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "Auto Save Bot"
+          git config --global user.email "autosave@github.com"
+
+      - name: Commit & Push final files
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          REPO="https://$GH_PAT@github.com/${{ github.repository }}.git"
+          git remote set-url origin "$REPO"
+
+          git add -A
+          git commit -m "Final sync after manual stop" || true
+          git push origin HEAD:main --force || true
