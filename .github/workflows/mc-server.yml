@@ -102,7 +102,39 @@ jobs:
       run: |
         echo "Updating No-IP domain $NOIP_HOST → $IP"
         curl -s -u "$NOIP_USER:$NOIP_PASS" "http://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$IP" || true
+        
+    - name: Notify Telegram bot
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        NOIP_HOST: ${{ secrets.NOIP_HOSTNAME }}
+        PORT: ${{ env.PORT }}
+      run: |
+        # Send startup message
+        MESSAGE="🎮 Minecraft server is LIVE!\n\nConnect at:\n🌐 $NOIP_HOST:$PORT"
+        curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+          -d chat_id="$TELEGRAM_CHAT_ID" \
+          -d text="$MESSAGE" \
+          -d parse_mode="Markdown"
 
+        # Start listener for /ip or /port commands
+        nohup bash -c '
+        OFFSET=0
+        while true; do
+          UPDATES=$(curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates?offset=$OFFSET")
+          for row in $(echo "$UPDATES" | jq -c ".result[]"); do
+            OFFSET=$(echo $row | jq ".update_id")+1
+            TEXT=$(echo $row | jq -r ".message.text // empty")
+            if [[ "$TEXT" == "/ip" || "$TEXT" == "/port" ]]; then
+              REPLY="🎮 Server address:\n🌐 '"$NOIP_HOST:$PORT"'"
+              curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+                -d chat_id="$TELEGRAM_CHAT_ID" \
+                -d text="$REPLY"
+            fi
+          done
+          sleep 5
+        done
+        ' >/dev/null 2>&1 &
     - name: Run Minecraft Server with Backup & Controller
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
