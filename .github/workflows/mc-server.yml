@@ -80,16 +80,10 @@ jobs:
 
         HOST=$(echo "$NGROK_URL" | cut -d'/' -f3 | cut -d':' -f1)
         PORT=$(echo "$NGROK_URL" | cut -d':' -f3)
-
-        # Try to resolve numeric IP, fallback to hostname
         IP=$(dig +short $HOST | head -n 1)
-        if [ -z "$IP" ]; then
-          echo "⚠️ dig failed, using hostname instead"
-          IP=$HOST
-        fi
 
         echo "✅ Ngrok TCP Endpoint: $HOST:$PORT"
-        echo "✅ Resolved IP/Host: $IP:$PORT"
+        echo "✅ Numeric IP: $IP:$PORT"
 
         echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
         echo "HOST=$HOST" >> $GITHUB_ENV
@@ -98,19 +92,16 @@ jobs:
 
         echo "### Minecraft Address" >> $GITHUB_STEP_SUMMARY
         echo "- Hostname: \`$HOST:$PORT\`" >> $GITHUB_STEP_SUMMARY
-        echo "- Resolved IP/Host: \`$IP:$PORT\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Numeric IP: \`$IP:$PORT\`" >> $GITHUB_STEP_SUMMARY
 
     - name: Setup No-IP Dynamic DNS
       env:
-        NOIP_USER: ${{ secrets.NOIP_USER }}
-        NOIP_PASS: ${{ secrets.NOIP_PASS }}
-        NOIP_HOST: ${{ secrets.NOIP_HOST }}
-        IP: ${{ env.IP }}
+        NOIP_USERNAME: ${{ secrets.NOIP_USER }}
+        NOIP_PASSWORD: ${{ secrets.NOIP_PASS }}
+        NOIP_HOSTNAME: ${{ secrets.NOIP_HOST }}
       run: |
         echo "Updating No-IP domain $NOIP_HOST → $IP"
-        RESPONSE=$(curl -s -u "$NOIP_USER:$NOIP_PASS" \
-          "http://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$IP")
-        echo "No-IP Response: $RESPONSE"
+        curl -s -u "$NOIP_USER:$NOIP_PASS" "http://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$IP" || true
 
     - name: Run Minecraft Server with Backup & Controller
       env:
