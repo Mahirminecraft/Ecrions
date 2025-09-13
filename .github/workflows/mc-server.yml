@@ -96,9 +96,9 @@ jobs:
 
     - name: Setup No-IP Dynamic DNS
       env:
-        NOIP_USERNAME: ${{ secrets.NOIP_USER }}
-        NOIP_PASSWORD: ${{ secrets.NOIP_PASS }}
-        NOIP_HOSTNAME: ${{ secrets.NOIP_HOST }}
+        NOIP_USER: ${{ secrets.NOIP_USERNAME }}
+        NOIP_PASS: ${{ secrets.NOIP_PASSWORD }}
+        NOIP_HOST: ${{ secrets.NOIP_HOSTNAME }}
       run: |
         echo "Updating No-IP domain $NOIP_HOST → $IP"
         curl -s -u "$NOIP_USER:$NOIP_PASS" "http://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$IP" || true
