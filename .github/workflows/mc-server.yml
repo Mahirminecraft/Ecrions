@@ -138,6 +138,7 @@ jobs:
         echo "Starting Minecraft server..."
         java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
         echo $! > mc.pid
+    - name: Run Minecraft Server with Backup & Controller
       env:
         GH_PAT: ${{ secrets.GH_PAT }}
       run: |
