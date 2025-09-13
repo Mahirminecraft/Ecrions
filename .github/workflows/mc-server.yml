@@ -114,25 +114,28 @@ jobs:
         MESSAGE="🎮 Minecraft server is LIVE!\n\nConnect at:\n🌐 $NOIP_HOST:$PORT"
         curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
           -d chat_id="$TELEGRAM_CHAT_ID" \
-          -d text="$MESSAGE" \
-          -d parse_mode="Markdown"
+          -d text="$MESSAGE"
 
         # Start listener for /ip or /port commands
         nohup bash -c '
         OFFSET=0
         while true; do
-          UPDATES=$(curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates?offset=$OFFSET")
-          for row in $(echo "$UPDATES" | jq -c ".result[]"); do
-            OFFSET=$(echo $row | jq ".update_id")+1
-            TEXT=$(echo $row | jq -r ".message.text // empty")
-            if [[ "$TEXT" == "/ip" || "$TEXT" == "/port" ]]; then
-              REPLY="🎮 Server address:\n🌐 '"$NOIP_HOST:$PORT"'"
-              curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-                -d chat_id="$TELEGRAM_CHAT_ID" \
-                -d text="$REPLY"
-            fi
-          done
-          sleep 5
+          UPDATES=$(curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates?offset=$OFFSET&timeout=10")
+          COUNT=$(echo "$UPDATES" | jq ".result | length")
+          if [ "$COUNT" -gt 0 ]; then
+            for row in $(echo "$UPDATES" | jq -c ".result[]"); do
+              UPDATE_ID=$(echo "$row" | jq -r ".update_id")
+              TEXT=$(echo "$row" | jq -r ".message.text // empty")
+              OFFSET=$((UPDATE_ID+1))  # advance offset so same msg isn’t re-read
+              if [[ "$TEXT" == "/ip" || "$TEXT" == "/port" ]]; then
+                REPLY="🎮 Server address:\n🌐 '"$NOIP_HOST:$PORT"'"
+                curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+                  -d chat_id="$TELEGRAM_CHAT_ID" \
+                  -d text="$REPLY"
+              fi
+            done
+          fi
+          sleep 2
         done
         ' >/dev/null 2>&1 &
     - name: Run Minecraft Server with Backup & Controller
