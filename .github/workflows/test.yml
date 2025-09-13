@@ -1,0 +1,33 @@
+name: Unzip and Commit Geyser Plugin
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  unzip_and_commit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.GH_PAT }}   # use your GH_PAT secret
+
+      - name: Ensure unzip is installed
+        run: sudo apt-get update && sudo apt-get install -y unzip
+
+      - name: Unzip Geyser-Spigot.zip
+        run: |
+          unzip -o plugin/Geyser-Spigot.zip -d plugin/
+          ls -R plugin/
+
+      - name: Commit and push unzipped files
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add plugin/*
+          git commit -m "Unzipped Geyser-Spigot.zip" || echo "No changes to commit"
+          git push
