@@ -44,7 +44,7 @@ jobs:
       with:
         port: 25565       # Minecraft port
         token: ${{ secrets.LXP_TOKEN }}
-        protocol: tcp
+        type: tcp         # Correct input for TCP tunnels
 
     - name: Keep workflow alive
       run: sleep infinity
