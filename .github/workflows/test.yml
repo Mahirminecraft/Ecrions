@@ -46,7 +46,7 @@ jobs:
 
     - name: Start LocalXpose TCP Tunnel
       run: |
-        nohup loclx tunnel tcp --to localhost:25565 > loclx.log 2>&1 &
+        nohup loclx tunnel tcp > loclx.log 2>&1 &
         sleep 20
 
     - name: Display Public IP:Port
