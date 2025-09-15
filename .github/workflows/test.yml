@@ -48,16 +48,16 @@ jobs:
       id: loclx
       uses: LocalXpose/localxpose-action@v1
       with:
-        token: ${{ secrets.LXP_TOKEN }}
-        port: 25565
-        proto: tcp
+          token: ${{ secrets.LXP_TOKEN }}
+          proto: tcp
+          port: 25565
 
     - name: Display Public IP:Port
       run: |
-        echo "========================================"
-        echo " Minecraft Server Public Address:"
-        echo "${{ steps.loclx.outputs.url }}"
-        echo "========================================"
+          echo "========================================"
+          echo " Minecraft Server Public Address:"
+          echo "${{ steps.loclx.outputs.url }}"
+          echo "========================================"
 
     - name: Keep workflow alive
       run: sleep infinity
