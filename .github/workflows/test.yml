@@ -39,10 +39,14 @@ jobs:
       run: |
         java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
         echo $! > mc.pid
-        
+
     - name: Login to LocalXpose
       run: |
-        loclx account login
+        echo "$LXP_TOKEN" | loclx account login --token
+
+    - name: Login to LocalXpose
+      run: |
+        localxpose account login --token="$LXP_TOKEN" --headless
 
     - name: Start LocalXpose TCP Tunnel
       run: |
