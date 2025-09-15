@@ -6,7 +6,10 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 370  # 6+ hours runtime
+    timeout-minutes: 360
+
+    env:
+      LXP_TOKEN: ${{ secrets.LXP_TOKEN }}
 
     steps:
     - name: Checkout repo
@@ -18,64 +21,41 @@ jobs:
         distribution: temurin
         java-version: '21'
 
-    - name: Install tools
+    - name: Install essential tools & LocalXpose via Snap
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y zip unzip jq curl dnsutils
+        sudo apt-get install -y zip unzip jq curl dnsutils snapd
+        sudo snap install localxpose
 
-    - name: Download Paper 1.21.8 build #58
+    - name: Download PaperMC Server
       run: |
         while [ ! -f paper-1.21.8-58.jar ]; do
-          curl -fL -o paper-1.21.8-58.jar \
-          https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar \
-          && break
-          echo "Download failed, retrying in 15s..."
-          sleep 15
+          curl -O -L https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
+          sleep 5
         done
-
-    - name: Accept EULA
-      run: echo "eula=true" > eula.txt
-
-    - name: Install LocalXpose
-      run: |
-        curl -Lo loclx-linux-amd64 https://localxpose.io/downloads/loclx-linux-amd64
-        chmod +x loclx-linux-amd64
-        sudo mv loclx-linux-amd64 /usr/local/bin/loclx
-        loclx --version
-
-    - name: Login LocalXpose
-      env:
-        LXP_TOKEN: ${{ secrets.LXP_TOKEN }}
-      run: echo "$LXP_TOKEN" | loclx account login --token
+        echo "eula=true" > eula.txt
 
     - name: Start Minecraft Server
       run: |
-        java -Xms2G -Xmx2G -jar paper-1.21.8-58.jar nogui &
+        java -Xms1G -Xmx2G -jar paper-1.21.8-58.jar nogui &
         echo $! > mc.pid
 
-    - name: Start LocalXpose Tunnel
+    - name: Login to LocalXpose
+      run: |
+        echo "$LXP_TOKEN" | loclx account login --token
+
+    - name: Start LocalXpose TCP Tunnel
       run: |
         nohup loclx tunnel tcp --to localhost:25565 > loclx.log 2>&1 &
-        sleep 15
+        sleep 10
 
-    - name: Extract Public Address
-      id: tunnel
+    - name: Display Public IP:Port
       run: |
-        ADDR=$(grep -Eo 'tcp://[0-9a-zA-Z\.\-:]*' loclx.log | head -n 1)
-        if [ -z "$ADDR" ]; then
-          echo "No tunnel address found!"
-          exit 1
-        fi
-        echo "Tunnel Address: $ADDR"
-        echo "address=$ADDR" >> $GITHUB_OUTPUT
-
-    - name: Show Minecraft Connection Info
-      run: |
-        echo "======================================"
-        echo "✅ Your Minecraft server is live!"
-        echo "Connect using this address:"
-        echo "${{ steps.tunnel.outputs.address }}"
-        echo "======================================"
+        ADDR=$(grep -Eo 'tcp://[0-9A-Za-z\.\-:]*' loclx.log | head -n1)
+        echo "========================================"
+        echo " Minecraft Server Public Address:"
+        echo "$ADDR"
+        echo "========================================"
 
     - name: Keep workflow alive
       run: sleep infinity
