@@ -46,13 +46,13 @@ jobs:
 
     - name: Start LocalXpose TCP Tunnel
       run: |
-        nohup localxpose tunnel tcp --to localhost:25565 > loclx.log 2>&1 &
+        nohup /snap/bin/localxpose tunnel tcp --to localhost:25565 > loclx.log 2>&1 &
         sleep 20
 
     - name: Display Public IP:Port
       run: |
         cat loclx.log
-        ADDR=$(grep -m1 -oE 'tcp://[0-9A-Za-z\.\-:]*' loclx.log || true)
+        ADDR=$(grep -m1 -oE 'tcp://[^ ]+' loclx.log || true)
         echo "========================================"
         echo " Minecraft Server Public Address:"
         if [ -n "$ADDR" ]; then
