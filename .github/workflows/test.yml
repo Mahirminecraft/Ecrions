@@ -42,7 +42,7 @@ jobs:
 
     - name: Login to LocalXpose
       run: |
-        echo "$LXP_TOKEN" | loclx account login --token
+        echo "$LXP_TOKEN" | loclx account login
 
     - name: Start LocalXpose TCP Tunnel
       run: |
