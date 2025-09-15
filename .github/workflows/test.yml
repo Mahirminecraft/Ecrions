@@ -45,8 +45,8 @@ jobs:
 
     - name: Start LocalXpose TCP Tunnel
       run: |
-        loclx login --token ${{ secrets.LXP_TOKEN }}
-        loclx tunnel tcp --port 25565 &
+        export LXP_TOKEN=${{ secrets.LXP_TOKEN }}
+        loclx tunnel tcp --to 25565 &
         echo $! > loclx.pid
         sleep 5
         loclx logs > loclx.log
