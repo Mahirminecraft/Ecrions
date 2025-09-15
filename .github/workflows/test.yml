@@ -21,10 +21,14 @@ jobs:
         distribution: temurin
         java-version: '21'
 
-    - name: Install essential tools
+    - name: Install essential tools & LocalXpose CLI
       run: |
         sudo apt-get update -y
         sudo apt-get install -y zip unzip jq curl dnsutils
+        curl -L https://api.localxpose.io/api/downloads/loclx-linux-amd64.zip -o loclx.zip
+        unzip loclx.zip
+        sudo mv loclx /usr/local/bin/
+        sudo chmod +x /usr/local/bin/loclx
 
     - name: Download PaperMC Server
       run: |
@@ -40,11 +44,25 @@ jobs:
         echo $! > mc.pid
 
     - name: Start LocalXpose TCP Tunnel
-      uses: LocalXpose/localxpose-action@v1
-      with:
-        port: 25565       # Minecraft port
-        token: ${{ secrets.LXP_TOKEN }}
-        type: tcp         # Correct input for TCP tunnels
+      run: |
+        loclx login --token ${{ secrets.LXP_TOKEN }}
+        loclx tunnel tcp --to 25565 &
+        echo $! > loclx.pid
+        sleep 5
+        loclx logs > loclx.log
+
+    - name: Display Public IP:Port
+      run: |
+        cat loclx.log
+        ADDR=$(grep -m1 -oE 'tcp://[^ ]+' loclx.log || true)
+        echo "========================================"
+        echo " Minecraft Server Public Address:"
+        if [ -n "$ADDR" ]; then
+          echo "$ADDR"
+        else
+          echo "❌ No TCP tunnel address found in loclx.log"
+        fi
+        echo "========================================"
 
     - name: Keep workflow alive
       run: sleep infinity
