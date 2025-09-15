@@ -43,8 +43,11 @@ jobs:
         java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
         echo $! > mc.pid
 
-    - name: Start LocalXpose TCP Tunnel
+    - name: Start LocalXpose TCP Tunnel (Robust Authentication)
       run: |
+        # Method 1: Try login command (for newer versions)
+        loclx login --token ${{ secrets.LXP_TOKEN }} || true
+        # Method 2: Try setting environment variable (for older versions)
         LXP_TOKEN=${{ secrets.LXP_TOKEN }} loclx tunnel tcp --to 25565 &
         echo $! > loclx.pid
         sleep 5
