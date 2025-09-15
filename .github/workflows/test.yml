@@ -1,33 +1,81 @@
-name: Unzip and Commit Geyser Plugin
+name: Minecraft Paper Server + LocalXpose
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
-  unzip_and_commit:
+  minecraft:
     runs-on: ubuntu-latest
+    timeout-minutes: 370  # 6+ hours runtime
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-        with:
-          token: ${{ secrets.GH_PAT }}   # use your GH_PAT secret
+    - name: Checkout repo
+      uses: actions/checkout@v3
 
-      - name: Ensure unzip is installed
-        run: sudo apt-get update && sudo apt-get install -y unzip
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: temurin
+        java-version: '21'
 
-      - name: Unzip Geyser-Spigot.zip
-        run: |
-          unzip -o plugin/Geyser-Spigot.zip -d plugin/
-          ls -R plugin/
+    - name: Install tools
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y zip unzip jq curl dnsutils
 
-      - name: Commit and push unzipped files
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add plugin/*
-          git commit -m "Unzipped Geyser-Spigot.zip" || echo "No changes to commit"
-          git push
+    - name: Download Paper 1.21.8 build #58
+      run: |
+        while [ ! -f paper-1.21.8-58.jar ]; do
+          curl -fL -o paper-1.21.8-58.jar \
+          https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar \
+          && break
+          echo "Download failed, retrying in 15s..."
+          sleep 15
+        done
+
+    - name: Accept EULA
+      run: echo "eula=true" > eula.txt
+
+    - name: Install LocalXpose
+      run: |
+        curl -Lo loclx-linux-amd64 https://localxpose.io/downloads/loclx-linux-amd64
+        chmod +x loclx-linux-amd64
+        sudo mv loclx-linux-amd64 /usr/local/bin/loclx
+        loclx --version
+
+    - name: Login LocalXpose
+      env:
+        LXP_TOKEN: ${{ secrets.LXP_TOKEN }}
+      run: echo "$LXP_TOKEN" | loclx account login --token
+
+    - name: Start Minecraft Server
+      run: |
+        java -Xms2G -Xmx2G -jar paper-1.21.8-58.jar nogui &
+        echo $! > mc.pid
+
+    - name: Start LocalXpose Tunnel
+      run: |
+        nohup loclx tunnel tcp --to localhost:25565 > loclx.log 2>&1 &
+        sleep 15
+
+    - name: Extract Public Address
+      id: tunnel
+      run: |
+        ADDR=$(grep -Eo 'tcp://[0-9a-zA-Z\.\-:]*' loclx.log | head -n 1)
+        if [ -z "$ADDR" ]; then
+          echo "No tunnel address found!"
+          exit 1
+        fi
+        echo "Tunnel Address: $ADDR"
+        echo "address=$ADDR" >> $GITHUB_OUTPUT
+
+    - name: Show Minecraft Connection Info
+      run: |
+        echo "======================================"
+        echo "✅ Your Minecraft server is live!"
+        echo "Connect using this address:"
+        echo "${{ steps.tunnel.outputs.address }}"
+        echo "======================================"
+
+    - name: Keep workflow alive
+      run: sleep infinity
