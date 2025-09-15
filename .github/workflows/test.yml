@@ -50,12 +50,19 @@ jobs:
         sleep 15
 
     - name: Display Public IP:Port
-      run: |
-        ADDR=$(grep -oE 'tcp://[^ ]*' loclx.log | head -n1)
-        echo "========================================"
-        echo " Minecraft Server Public Address:"
-        echo "$ADDR"
-        echo "========================================"
+        run: |
+          # wait until tunnel URL appears
+          sleep 20
+          cat loclx.log
+          ADDR=$(grep -m1 -oE 'tcp://[0-9A-Za-z\.\-:]*' loclx.log || true)
+          echo "========================================"
+          echo " Minecraft Server Public Address:"
+          if [ -n "$ADDR" ]; then
+            echo "$ADDR"
+          else
+            echo "❌ No tunnel address found in loclx.log"
+          fi
+          echo "========================================"
 
     - name: Keep workflow alive
       run: sleep infinity
