@@ -21,10 +21,11 @@ jobs:
         distribution: temurin
         java-version: '21'
 
-    - name: Install essential tools
+    - name: Install essential tools & LocalXpose via Snap
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y zip unzip jq curl dnsutils
+        sudo apt-get install -y zip unzip jq curl dnsutils snapd
+        sudo snap install localxpose
 
     - name: Download PaperMC Server
       run: |
@@ -39,7 +40,11 @@ jobs:
         java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
         echo $! > mc.pid
 
-    - name: Start LocalXpose Tunnel
+    - name: Login to LocalXpose
+      run: |
+        echo "$LXP_TOKEN" | loclx account login --token
+
+    - name: Start LocalXpose TCP Tunnel
       id: loclx
       uses: LocalXpose/localxpose-action@v1
       with:
