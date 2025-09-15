@@ -1,4 +1,4 @@
-name: Minecraft Server with LocalXpose
+name: Minecraft Paper Server + LocalXpose
 
 on:
   workflow_dispatch:
@@ -6,49 +6,56 @@ on:
 jobs:
   minecraft:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    env:
+      LXP_TOKEN: ${{ secrets.LXP_TOKEN }}
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+    - name: Checkout repo
+      uses: actions/checkout@v3
 
-      - name: Set up Java
-        uses: actions/setup-java@v3
-        with:
-          distribution: temurin
-          java-version: 17
+    - name: Setup Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: temurin
+        java-version: '21'
 
-      - name: Download Minecraft server
-        run: |
-          mkdir server
-          cd server
-          curl -o server.jar https://piston-data.mojang.com/v1/objects/8a021f38cce96c260a48f9d18ad1d5eb6f7f02c7/server.jar
-          echo "eula=true" > eula.txt
+    - name: Install essential tools & LocalXpose via Snap
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y zip unzip jq curl dnsutils snapd
+        sudo snap install localxpose
 
-      - name: Start Minecraft server
-        run: |
-          cd server
-          nohup java -Xmx1024M -Xms1024M -jar server.jar nogui > server.log 2>&1 &
+    - name: Download PaperMC Server
+      run: |
+        while [ ! -f paper-1.21.8-58.jar ]; do
+          curl -O -L https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
+          sleep 5
+        done
+        echo "eula=true" > eula.txt
 
-      - name: Install LocalXpose
-        run: |
-          curl -Lo loclx.tar.gz https://github.com/localxpose/localxpose/releases/download/v0.14.1/loclx_0.14.1_linux_amd64.tar.gz
-          tar -xzf loclx.tar.gz
-          chmod +x loclx
-          sudo mv loclx /usr/local/bin/loclx
+    - name: Start Minecraft Server
+      run: |
+        java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
+        echo $! > mc.pid
 
-      - name: Login LocalXpose
-        run: |
-          echo "${{ secrets.LXP_TOKEN }}" | loclx account login --token
+    - name: Login to LocalXpose
+      run: |
+        echo "$LXP_TOKEN" | loclx account login --token
 
-      - name: Start LocalXpose TCP Tunnel
-        run: |
-          nohup loclx tunnel tcp --to localhost:25565 > loclx.log 2>&1 &
-          sleep 15
+    - name: Start LocalXpose TCP Tunnel
+      run: |
+        nohup loclx tunnel tcp --to localhost:25565 > loclx.log 2>&1 &
+        sleep 15
 
-      - name: Display Public IP:Port
-        run: |
-          ADDR=$(grep -oE 'tcp://[^ ]*' loclx.log | head -n1)
-          echo "========================================"
-          echo " Minecraft Server Public Address:"
-          echo "$ADDR"
-          echo "========================================"
+    - name: Display Public IP:Port
+      run: |
+        ADDR=$(grep -oE 'tcp://[^ ]*' loclx.log | head -n1)
+        echo "========================================"
+        echo " Minecraft Server Public Address:"
+        echo "$ADDR"
+        echo "========================================"
+
+    - name: Keep workflow alive
+      run: sleep infinity
