@@ -1,19 +1,20 @@
-name: Minecraft Paper Server + LocalXpose
+name: Fully Automatic Minecraft Paper Server + Skyport + ngrok/No-IP
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"   # every 6 hours
 
 jobs:
   minecraft:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
-
-    env:
-      LXP_TOKEN: ${{ secrets.LXP_TOKEN }}
+    timeout-minutes: 370
 
     steps:
-    - name: Checkout repo
+    - name: Checkout repository
       uses: actions/checkout@v3
+      with:
+        persist-credentials: false
 
     - name: Setup Java
       uses: actions/setup-java@v3
@@ -21,30 +22,124 @@ jobs:
         distribution: temurin
         java-version: '21'
 
-    - name: Install essential tools
+    - name: Install dependencies
       run: |
         sudo apt-get update -y
-        sudo apt-get install -y zip unzip jq curl dnsutils
+        sudo apt-get install -y zip unzip jq curl dnsutils netcat-openbsd nodejs npm
+        sudo npm install -g pm2
 
-    - name: Download PaperMC Server
+    - name: Restore latest backup artifact automatically
       run: |
-        while [ ! -f paper-1.21.8-58.jar ]; do
-          curl -O -L https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
-          sleep 5
-        done
-        echo "eula=true" > eula.txt
+        echo "Fetching latest artifact..."
+        ARTIFACT_ID=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          https://api.github.com/repos/${{ github.repository }}/actions/artifacts \
+          | jq -r '.artifacts | sort_by(.created_at) | reverse | .[0].id')
+        if [ "$ARTIFACT_ID" != "null" ]; then
+          echo "Downloading artifact ID $ARTIFACT_ID"
+          curl -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -o artifact.zip \
+            https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ARTIFACT_ID/zip
+          unzip -o artifact.zip -d ./
+          echo "✅ Latest backup restored."
+        else
+          echo "❌ No previous artifact found, starting fresh."
+        fi
+
+    - name: Download Paper 1.21.8 build #58
+      run: |
+        if [ ! -f ./server/paper-1.21.8-58.jar ]; then
+          mkdir -p ./server
+          curl -fL -o ./server/paper-1.21.8-58.jar \
+            https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar
+        fi
+
+    - name: Accept EULA
+      run: echo "eula=true" > ./server/eula.txt
+
+    - name: Install Skyport Panel + Wings
+      run: |
+        sudo su -c "bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/panel)"
+        sudo su -c "bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/wings)"
+        cd skyportd
+        pm2 start . || true
+
+    - name: Install ngrok
+      run: |
+        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc > /dev/null
+        echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+        sudo apt-get update && sudo apt-get install -y ngrok
 
     - name: Start Minecraft Server
       run: |
-        java -Xms16G -Xmx16G -jar paper-1.21.8-58.jar nogui &
-        echo $! > mc.pid
+        cd server
+        java -Xms2G -Xmx2G -jar paper-1.21.8-58.jar nogui | tee ../mc.log &
+        echo $! > ../mc.pid
+        sleep 15
 
-    - name: Start LocalXpose TCP Tunnel
-      uses: LocalXpose/localxpose-action@v1
+    - name: Start ngrok TCP tunnel
+      env:
+        NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
+      run: |
+        ngrok authtoken "$NGROK_AUTHTOKEN"
+        nohup ngrok tcp 25565 > ngrok.log 2>&1 &
+        sleep 10
+
+    - name: Fetch ngrok TCP endpoint and numeric IP
+      env:
+        NGROK_API_KEY: ${{ secrets.NGROK_API_KEY }}
+      run: |
+        RESPONSE=$(curl -s -H "Authorization: Bearer $NGROK_API_KEY" \
+          -H "Ngrok-Version: 2" \
+          https://api.ngrok.com/tunnels)
+
+        NGROK_URL=$(echo "$RESPONSE" | jq -r '.tunnels[] | select(.public_url | startswith("tcp://")) | .public_url' | head -n 1)
+        if [ -z "$NGROK_URL" ]; then
+          echo "❌ No TCP tunnel found"
+          exit 1
+        fi
+
+        HOST=$(echo "$NGROK_URL" | cut -d'/' -f3 | cut -d':' -f1)
+        PORT=$(echo "$NGROK_URL" | cut -d':' -f3)
+        IP=$(dig +short $HOST | head -n 1)
+
+        echo "✅ Ngrok TCP Endpoint: $HOST:$PORT"
+        echo "✅ Numeric IP: $IP:$PORT"
+
+        echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
+        echo "HOST=$HOST" >> $GITHUB_ENV
+        echo "PORT=$PORT" >> $GITHUB_ENV
+        echo "IP=$IP" >> $GITHUB_ENV
+
+        echo "### Minecraft Address" >> $GITHUB_STEP_SUMMARY
+        echo "- Hostname: \`$HOST:$PORT\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Numeric IP: \`$IP:$PORT\`" >> $GITHUB_STEP_SUMMARY
+
+    - name: Setup No-IP Dynamic DNS
+      env:
+        NOIP_USER: ${{ secrets.NOIP_USERNAME }}
+        NOIP_PASS: ${{ secrets.NOIP_PASSWORD }}
+        NOIP_HOST: ${{ secrets.NOIP_HOSTNAME }}
+      run: |
+        curl -u "$NOIP_USER:$NOIP_PASS" "https://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$IP"
+
+    - name: Backup server + panel as artifact
+      uses: actions/upload-artifact@v3
       with:
-        port: 25565       # Minecraft port
-        token: ${{ secrets.LXP_TOKEN }}
-        type: tcp         # Correct input for TCP tunnels
+        name: mc-backup-${{ github.run_number }}
+        path: |
+          ./server
+          ./skyportd
+        retention-days: 30
 
-    - name: Keep workflow alive
-      run: sleep infinity
+    - name: Cleanup old artifacts (keep only latest 10)
+      run: |
+        curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          https://api.github.com/repos/${{ github.repository }}/actions/artifacts \
+          | jq -r '.artifacts | sort_by(.created_at) | reverse | .[10:] | .[] | .id' > old.txt
+
+        while read -r ARTIFACT_ID; do
+          echo "Deleting old artifact $ARTIFACT_ID"
+          curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ARTIFACT_ID
+        done < old.txt
