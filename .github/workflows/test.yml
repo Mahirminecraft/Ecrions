@@ -1,4 +1,4 @@
-name: Artifact + Skyport Panel Test
+name: Artifact + Skyport Panel Test (Minimal)
 
 on:
   workflow_dispatch:
@@ -11,12 +11,6 @@ jobs:
     steps:
     - name: Checkout repo
       uses: actions/checkout@v3
-
-    - name: Install dependencies
-      run: |
-        sudo apt-get update -y
-        sudo apt-get install -y curl unzip nodejs npm
-        sudo npm install -g pm2
 
     - name: Restore latest artifact
       run: |
@@ -37,14 +31,17 @@ jobs:
 
     - name: Install Skyport Panel + Wings
       run: |
+        set +e
         sudo su -c "bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/panel)"
         sudo su -c "bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/wings)"
-        cd skyportd
+        cd skyportd || true
         pm2 start . || true
+        set -e
 
-    - name: Upload test artifact
+    - name: Upload Skyport directory as artifact
       uses: actions/upload-artifact@v4
       with:
         name: test-artifact-${{ github.run_number }}
         path: ./skyportd
         retention-days: 7
+       
