@@ -1,47 +1,48 @@
-name: Artifact + Skyport Panel Test (Minimal)
+name: Skyport Panel & Wings with Public Access
 
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  install:
+    name: Install Skyport & Expose Panel
     runs-on: ubuntu-latest
-    timeout-minutes: 60
 
     steps:
-    - name: Checkout repo
-      uses: actions/checkout@v3
-
-    - name: Restore latest artifact
+    - name: Install Dependencies
       run: |
-        echo "Fetching latest artifact..."
-        ARTIFACT_ID=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
-          https://api.github.com/repos/${{ github.repository }}/actions/artifacts \
-          | jq -r '.artifacts | sort_by(.created_at) | reverse | .[0].id')
-        if [ "$ARTIFACT_ID" != "null" ]; then
-          curl -sL -H "Authorization: token ${{ secrets.GH_PAT }}" \
-            -H "Accept: application/vnd.github+json" \
-            -o artifact.zip \
-            https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ARTIFACT_ID/zip
-          unzip -o artifact.zip -d ./
-          echo "✅ Artifact restored"
-        else
-          echo "❌ No artifact found"
-        fi
+        sudo apt update
+        sudo apt install -y curl git nodejs npm unzip
 
-    - name: Install Skyport Panel + Wings
+    - name: Install Skyport Panel
       run: |
-        set +e
-        sudo su -c "bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/panel)"
-        sudo su -c "bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/wings)"
-        cd skyportd || true
-        pm2 start . || true
-        set -e
+        sudo su
+        bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/panel)
 
-    - name: Upload Skyport directory as artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-artifact-${{ github.run_number }}
-        path: ./skyportd
-        retention-days: 7
-       
+    - name: Install Wings Daemon
+      run: |
+        sudo su
+        bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/wings)
+        cd skyportd
+        echo '{}' > config.json  # Replace with actual config if needed
+        npm install -g pm2
+        pm2 start .
+
+    - name: Install ngrok
+      run: |
+        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+        echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+        sudo apt update && sudo apt install -y ngrok
+
+    - name: Start ngrok tunnel for port 3001
+      run: |
+        ngrok config add-authtoken NGROK_AUTHTOKEN
+        nohup ngrok http 3001 > ngrok.log &
+        sleep 5
+        curl -s http://localhost:4040/api/tunnels > tunnels.json
+        cat tunnels.json
+
+    - name: Show Public URL
+      run: |
+        echo "Skyport Panel is exposed via ngrok:"
+        curl -s http://localhost:4040/api/tunnels | grep -o 'https://[^"]*'
