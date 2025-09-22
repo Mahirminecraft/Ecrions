@@ -5,27 +5,24 @@ on:
 
 jobs:
   install:
-    name: Install Skyport & Expose Panel
     runs-on: ubuntu-latest
 
     steps:
-    - name: Install Dependencies
+    - name: Install dependencies
       run: |
         sudo apt update
         sudo apt install -y curl git nodejs npm unzip
 
     - name: Install Skyport Panel
       run: |
-        sudo su
-        bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/panel)
+        sudo bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/panel)
 
     - name: Install Wings Daemon
       run: |
-        sudo su
-        bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/wings)
+        sudo bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/wings)
         cd skyportd
         echo '{}' > config.json  # Replace with actual config if needed
-        npm install -g pm2
+        sudo npm install -g pm2
         pm2 start .
 
     - name: Install ngrok
@@ -36,13 +33,13 @@ jobs:
 
     - name: Start ngrok tunnel for port 3001
       run: |
-        ngrok config add-authtoken NGROK_AUTHTOKEN
+        ngrok config add-authtoken ${{ secrets.NGROK_AUTHTOKEN }}
         nohup ngrok http 3001 > ngrok.log &
         sleep 5
         curl -s http://localhost:4040/api/tunnels > tunnels.json
         cat tunnels.json
 
-    - name: Show Public URL
+    - name: Show public URL
       run: |
-        echo "Skyport Panel is exposed via ngrok:"
+        echo "Skyport Panel public URL:"
         curl -s http://localhost:4040/api/tunnels | grep -o 'https://[^"]*'
