@@ -31,12 +31,12 @@ jobs:
     - name: Restore latest backup artifact automatically
       run: |
         echo "Fetching latest artifact..."
-        ARTIFACT_ID=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+        ARTIFACT_ID=$(curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
           https://api.github.com/repos/${{ github.repository }}/actions/artifacts \
           | jq -r '.artifacts | sort_by(.created_at) | reverse | .[0].id')
         if [ "$ARTIFACT_ID" != "null" ]; then
           echo "Downloading artifact ID $ARTIFACT_ID"
-          curl -sL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          curl -sL -H "Authorization: token ${{ secrets.GH_PAT }}" \
             -H "Accept: application/vnd.github+json" \
             -o artifact.zip \
             https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ARTIFACT_ID/zip
@@ -124,7 +124,7 @@ jobs:
         curl -u "$NOIP_USER:$NOIP_PASS" "https://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$IP"
 
     - name: Backup server + panel as artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: mc-backup-${{ github.run_number }}
         path: |
@@ -134,12 +134,12 @@ jobs:
 
     - name: Cleanup old artifacts (keep only latest 10)
       run: |
-        curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+        curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
           https://api.github.com/repos/${{ github.repository }}/actions/artifacts \
           | jq -r '.artifacts | sort_by(.created_at) | reverse | .[10:] | .[] | .id' > old.txt
 
         while read -r ARTIFACT_ID; do
           echo "Deleting old artifact $ARTIFACT_ID"
-          curl -s -X DELETE -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          curl -s -X DELETE -H "Authorization: token ${{ secrets.GH_PAT }}" \
             https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ARTIFACT_ID
         done < old.txt
