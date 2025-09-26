@@ -14,7 +14,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: vps-data
-          path: C:\vps-restore
+          path: path/to/artifact
         continue-on-error: true
 
       # --- Step 2: Configure Core RDP Settings ---
@@ -106,4 +106,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: vps-data
-          path: C:\Users\RDP
+          path: path/to/artifact
