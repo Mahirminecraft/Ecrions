@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-      # --- Step 1: Download previous workflow artifact (if exists) ---
+      # --- Step 1: Download previous workflow artifact (optional for first run) ---
       - name: Download Previous Workflow Data
         uses: actions/download-artifact@v4
         with:
@@ -67,7 +67,8 @@ jobs:
       # --- Step 5: Establish Tailscale Connection ---
       - name: Establish Tailscale Connection
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.GH_PAT }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          # Use the proper Tailscale auth key, not GitHub PAT
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
           
           $tsIP = $null
           $retries = 0
@@ -101,8 +102,8 @@ jobs:
 
       # --- Step 8: Upload Entire C:\ as Artifact ---
       - name: Upload Workflow Data
-        if: always()  # try to run even if previous steps fail
+        if: always()  # attempt upload even if previous steps fail
         uses: actions/upload-artifact@v4
         with:
           name: vps-data
-          path: C:\
+          path: C:\Users\RDP
