@@ -15,6 +15,7 @@ jobs:
         with:
           name: vps-data
           path: C:\vps-restore
+        continue-on-error: true
 
       # --- Step 2: Configure Core RDP Settings ---
       - name: Configure Core RDP Settings
