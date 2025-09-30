@@ -1,9 +1,11 @@
-name: Minecraft Paper Server Rolling + ngrok/No-IP (Google Drive SA)
+name: Minecraft Paper Server (MEGA Overwrite) — Final to GitHub Release
 
 on:
   workflow_dispatch:
-  repository_dispatch:
-    types: [mc_restart]
+
+permissions:
+  contents: write    # To create releases and upload assets
+  actions: write     # To auto-restart the workflow
 
 jobs:
   minecraft:
@@ -11,11 +13,6 @@ jobs:
     timeout-minutes: 370
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        persist-credentials: false
-
     - name: Setup Java
       uses: actions/setup-java@v4
       with:
@@ -27,254 +24,148 @@ jobs:
         sudo apt-get update -y
         sudo apt-get install -y zip unzip jq curl dnsutils
 
-    - name: Setup rclone (Google Drive via Service Account)
+    - name: Setup rclone (MEGA)
       env:
-        GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
-        GDRIVE_ROOT_FOLDER_ID: ${{ secrets.GDRIVE_ROOT_FOLDER_ID }}
-        # Optional remote path secret; defaults to gdrive:mcserver if empty
-        SECRET_REMOTE_PATH: ${{ secrets.GDRIVE_REMOTE_PATH }}
+        MEGA_EMAIL: ${{ secrets.MEGA_EMAIL }}
+        MEGA_PASSWORD: ${{ secrets.MEGA_PASSWORD }}
+        MEGA_REMOTE_PATH: ${{ secrets.MEGA_REMOTE_PATH }}
       run: |
         set -e
-        if [ -z "${GDRIVE_SA_JSON:-}" ]; then
-          echo "Missing secret GDRIVE_SA_JSON"; exit 1
+        if [ -z "${MEGA_EMAIL:-}" ] || [ -z "${MEGA_PASSWORD:-}" ]; then
+          echo "Missing secrets: MEGA_EMAIL and/or MEGA_PASSWORD"; exit 1
         fi
 
-        # Install rclone
         curl -fsSL https://rclone.org/install.sh | sudo bash
+        OBSCURED=$(rclone obscure "$MEGA_PASSWORD")
+        echo "RCLONE_CONFIG_MEGA_TYPE=mega" >> $GITHUB_ENV
+        echo "RCLONE_CONFIG_MEGA_USER=$MEGA_EMAIL" >> $GITHUB_ENV
+        echo "RCLONE_CONFIG_MEGA_PASS=$OBSCURED" >> $GITHUB_ENV
 
-        # Write SA key JSON
-        mkdir -p ~/.config/rclone
-        printf '%s' "$GDRIVE_SA_JSON" > "$RUNNER_TEMP/sa.json"
+        REMOTE="${MEGA_REMOTE_PATH:-mega:mcserver}"
+        echo "REMOTE=$REMOTE" >> $GITHUB_ENV
 
-        # Build rclone config
-        {
-          echo "[gdrive]"
-          echo "type = drive"
-          echo "scope = drive"
-          echo "service_account_file = $RUNNER_TEMP/sa.json"
-          if [ -n "${GDRIVE_ROOT_FOLDER_ID:-}" ]; then
-            echo "root_folder_id = $GDRIVE_ROOT_FOLDER_ID"
-          fi
-        } > ~/.config/rclone/rclone.conf
-
-        rclone version
-
-        # Determine remote path (default if not provided)
-        GDRIVE_PATH="${SECRET_REMOTE_PATH}"
-        if [ -z "$GDRIVE_PATH" ] || [ "$GDRIVE_PATH" = "null" ]; then
-          GDRIVE_PATH="gdrive:mcserver"
+        # Ensure the main directory exists. If not, it's a fresh start.
+        if ! rclone lsd "$REMOTE" >/dev/null 2>&1; then
+          echo "Remote path '$REMOTE' does not exist. Creating new files."
+          rclone mkdir "$REMOTE/current" || true
         fi
-        echo "Using Google Drive path: $GDRIVE_PATH"
-        echo "GDRIVE_PATH=$GDRIVE_PATH" >> $GITHUB_ENV
 
-        # Prepare folders on Drive
-        rclone mkdir "$GDRIVE_PATH" || true
-        rclone mkdir "$GDRIVE_PATH/Rolling" || true
-        rclone mkdir "$GDRIVE_PATH/Finals" || true
-
-    - name: Download Paper 1.21.8 build #58
+    - name: Download latest Paper build
       run: |
-        while [ ! -f paper-1.21.8-58.jar ]; do
-          curl -fL -o paper-1.21.8-58.jar \
-            https://api.papermc.io/v2/projects/paper/versions/1.21.8/builds/58/downloads/paper-1.21.8-58.jar \
-            && break
+        set -e
+        VERSION=$(curl -fsSL https://api.papermc.io/v2/projects/paper | jq -r '.versions[-1]')
+        META=$(curl -fsSL "https://api.papermc.io/v2/projects/paper/versions/$VERSION/builds")
+        BUILD=$(echo "$META" | jq -r '.builds[-1].build')
+        JAR="paper-$VERSION-$BUILD.jar"
+        URL="https://api.papermc.io/v2/projects/paper/versions/$VERSION/builds/$BUILD/downloads/$JAR"
+
+        echo "Downloading $JAR ..."
+        until curl -fL -o "$JAR" "$URL"; do
           echo "Download failed, retrying in 15s..."
           sleep 15
         done
+        echo "SERVER_JAR=$JAR" >> $GITHUB_ENV
 
     - name: Accept EULA
       run: echo "eula=true" > eula.txt
 
-    - name: Restore files from Google Drive (if present)
+    - name: Restore from MEGA (Full Overwrite)
       run: |
         set -e
-        if rclone ls "$GDRIVE_PATH/current.zip" >/dev/null 2>&1; then
-          echo "Found previous backup on Drive; restoring..."
-          rclone copy "$GDRIVE_PATH/current.zip" .
-          unzip -o current.zip || true
-          rm -f current.zip
+        if rclone lsf "$REMOTE/current" --max-depth 1 | grep -q .; then
+          echo "Found previous backup. Downloading all files and overwriting local..."
+          # --ignore-existing forces rclone to copy all files, even if they match
+          rclone copy --ignore-existing "$REMOTE/current" . --create-empty-src-dirs -v
         else
-          echo "No previous backup found on Drive; starting fresh."
+          echo "No previous backup found on MEGA. Starting fresh."
         fi
 
     - name: Install ngrok
       run: |
         curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc > /dev/null
-        echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+        echo "deb https://ngrok-agent.s3.amazonaws.com stable main" | sudo tee /etc/apt/sources.list.d/ngrok.list
         sudo apt-get update && sudo apt-get install -y ngrok
 
     - name: Start Minecraft Server
       run: |
         echo "Starting Minecraft server..."
-        # GitHub-hosted runners can't spare 16G reliably; 6G is safer
-        java -Xms2G -Xmx6G -jar paper-1.21.8-58.jar nogui &
+        java -Xms2G -Xmx6G -jar "$SERVER_JAR" nogui &
         echo $! > mc.pid
 
-    - name: Start ngrok TCP tunnel
+    - name: Start ngrok, get address, and notify (optional)
       env:
         NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
-      run: |
-        if [ -n "${NGROK_AUTHTOKEN:-}" ]; then
-          ngrok authtoken "$NGROK_AUTHTOKEN"
-        fi
-        nohup ngrok tcp 25565 > ngrok.log 2>&1 &
-        sleep 10
-
-    - name: Fetch ngrok TCP endpoint and numeric IP
-      env:
-        NGROK_API_KEY: ${{ secrets.NGROK_API_KEY }}
-      run: |
-        RESPONSE=$(curl -s -H "Authorization: Bearer $NGROK_API_KEY" -H "Ngrok-Version: 2" https://api.ngrok.com/tunnels)
-        NGROK_URL=$(echo "$RESPONSE" | jq -r '.tunnels[] | select(.public_url | startswith("tcp://")) | .public_url' | head -n 1)
-        if [ -z "$NGROK_URL" ]; then
-          echo "No TCP tunnel found"; exit 1
-        fi
-
-        # Parse host and port safely
-        HOST=$(echo "$NGROK_URL" | cut -d'/' -f3 | cut -d':' -f1)
-        PORT=$(echo "$NGROK_URL" | awk -F':' '{print $NF}')
-        IP=$(dig +short "$HOST" | head -n 1)
-
-        echo "HOST=$HOST" >> $GITHUB_ENV
-        echo "PORT=$PORT" >> $GITHUB_ENV
-        echo "IP=$IP" >> $GITHUB_ENV
-
-        {
-          echo "### Minecraft Address"
-          echo "- Hostname: \`$HOST:$PORT\`"
-          echo "- Numeric IP: \`$IP:$PORT\`"
-        } >> $GITHUB_STEP_SUMMARY
-
-    - name: Setup No-IP Dynamic DNS (if configured)
-      env:
         NOIP_USER: ${{ secrets.NOIP_USERNAME }}
         NOIP_PASS: ${{ secrets.NOIP_PASSWORD }}
         NOIP_HOST: ${{ secrets.NOIP_HOSTNAME }}
-      run: |
-        if [ -n "${NOIP_USER:-}" ] && [ -n "${NOIP_PASS:-}" ] && [ -n "${NOIP_HOST:-}" ] && [ -n "${IP:-}" ]; then
-          echo "Updating No-IP domain $NOIP_HOST → $IP"
-          curl -s -u "$NOIP_USER:$NOIP_PASS" \
-            "http://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$IP" || true
-        else
-          echo "No-IP secrets not set; skipping."
-        fi
-        
-    - name: Notify Telegram bot (if configured)
-      env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        NOIP_HOST: ${{ secrets.NOIP_HOSTNAME }}
       run: |
-        if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
-          DEST="${NOIP_HOST:-$HOST}:$PORT"
-          MESSAGE="🎮 Minecraft server is LIVE!\n\nConnect at:\n🌐 $DEST"
-          curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-            -d chat_id="$TELEGRAM_CHAT_ID" -d text="$MESSAGE" >/dev/null || true
-
-          # Simple /ip or /port replies
-          nohup bash -c '
-          OFFSET=0
-          while true; do
-            UPDATES=$(curl -s "https://api.telegram.org/bot'"$TELEGRAM_BOT_TOKEN"'/getUpdates?offset=$OFFSET&timeout=10")
-            COUNT=$(echo "$UPDATES" | jq ".result | length")
-            if [ "$COUNT" -gt 0 ]; then
-              for row in $(echo "$UPDATES" | jq -c ".result[]"); do
-                UPDATE_ID=$(echo "$row" | jq -r ".update_id")
-                TEXT=$(echo "$row" | jq -r ".message.text // empty")
-                OFFSET=$((UPDATE_ID+1))
-                if [[ "$TEXT" == "/ip" || "$TEXT" == "/port" ]]; then
-                  REPLY="🎮 Server address:\n🌐 '"${NOIP_HOST:-$HOST}:$PORT"'"
-                  curl -s -X POST "https://api.telegram.org/bot'"$TELEGRAM_BOT_TOKEN"'/sendMessage" \
-                    -d chat_id="'"$TELEGRAM_CHAT_ID"'" -d text="$REPLY" >/dev/null
-                fi
-              done
-            fi
-            sleep 2
-          done
-          ' >/dev/null 2>&1 &
-        else
-          echo "Telegram secrets not set; skipping."
+        if [ -n "$NGROK_AUTHTOKEN" ]; then ngrok authtoken "$NGROK_AUTHTOKEN" || true; fi
+        nohup ngrok tcp 25565 > ngrok.log 2>&1 &
+        sleep 10
+        NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[]? | select(.public_url | startswith("tcp://")) | .public_url' | head -n1 || true)
+        if [ -z "$NGROK_URL" ]; then exit 0; fi
+        HOST=$(echo "$NGROK_URL" | sed -E 's#tcp://([^:]+):.*#\1#')
+        PORT=$(echo "$NGROK_URL" | sed -E 's#tcp://[^:]+:([0-9]+)#\1#')
+        IP=$(dig +short "$HOST" | head -n 1)
+        echo "### Minecraft Address" >> $GITHUB_STEP_SUMMARY
+        echo "- Hostname: \`$HOST:$PORT\`" >> $GITHUB_STEP_SUMMARY
+        if [ -n "$NOIP_USER" ] && [ -n "$IP" ]; then
+          curl -s -u "$NOIP_USER:$NOIP_PASS" "http://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$IP" || true
+        fi
+        if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+          ADDRESS="${NOIP_HOST:-$HOST}:$PORT"
+          MESSAGE="🎮 Minecraft server is LIVE!\n\nConnect at:\n🌐 $ADDRESS"
+          curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" -d chat_id="$TELEGRAM_CHAT_ID" -d text="$MESSAGE" >/dev/null
         fi
 
-    - name: Run Minecraft Server with Backup & Controller (Google Drive SA)
+    - name: Rolling Overwrite to MEGA and final backup to GitHub Release
       env:
-        GH_PAT: ${{ secrets.GH_PAT }}
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
-        mkdir -p Backup
+
+        # Define which folders to always upload
+        COPY_FLAGS="--include /world/** --include /plugins/** --include /config/**"
 
         # 10 cycles × 30 minutes ≈ 5 hours
         for i in {1..10}; do
           sleep 1800
-          echo "=== Backup cycle $i ==="
+          echo "=== Backup cycle $i (Full Overwrite) ==="
 
-          # Rotate local zips and upload rolling snapshots
-          for PART in 1 2 3 4; do
-            [ -f "Backup/${PART}.Backup-previous.zip" ] && rm -f "Backup/${PART}.Backup-previous.zip"
-            [ -f "Backup/${PART}.Backup-latest.zip" ] && mv "Backup/${PART}.Backup-latest.zip" "Backup/${PART}.Backup-previous.zip"
-            zip -rq "Backup/${PART}.Backup-latest.zip" world/ plugins/ config/ || true
-
-            rclone delete "$GDRIVE_PATH/Rolling/${PART}.Backup-previous.zip" || true
-            rclone moveto "$GDRIVE_PATH/Rolling/${PART}.Backup-latest.zip" "$GDRIVE_PATH/Rolling/${PART}.Backup-previous.zip" || true
-            # Retry upload until success
-            until rclone copyto "Backup/${PART}.Backup-latest.zip" "$GDRIVE_PATH/Rolling/${PART}.Backup-latest.zip"; do
-              echo "Upload failed; retrying in 10s..."
-              sleep 10
-            done
-          done
-
-          # "current.zip" for next run restore (retry until success)
-          zip -rq "current.zip" world/ plugins/ config/ || true
-          until rclone copyto "current.zip" "$GDRIVE_PATH/current.zip"; do
-            echo "Upload current.zip failed; retrying in 10s..."
-            sleep 10
+          # Unconditionally re-upload all server files, overwriting the destination
+          until rclone copy --ignore-existing . "$REMOTE/current" $COPY_FLAGS \
+            -v --transfers 8 --checkers 16 --mega-hard-delete; do
+            echo "Upload failed, retrying in 15s..."
+            sleep 15
           done
         done
 
-        echo "=== Final backup at ~5h ==="
+        echo "=== Final Overwrite and Backup at ~5h ==="
+        # Perform one last full upload to MEGA
+        rclone copy --ignore-existing . "$REMOTE/current" $COPY_FLAGS \
+          -v --transfers 8 --checkers 16 --mega-hard-delete
+
         TS=$(date -u +%Y%m%dT%H%M%SZ)
-        FINAL_ZIP="Backup/minecraft-backup-$TS.zip"
+
+        # Also copy the final state to a permanent, timestamped folder on MEGA
+        rclone copy "$REMOTE/current" "$REMOTE/Finals/backup-$TS" -v
+
+        # Zip the local files for the GitHub Release
+        FINAL_ZIP="minecraft-backup-$TS.zip"
         zip -rq "$FINAL_ZIP" world/ plugins/ config/ || true
 
-        # Upload final and refresh current.zip
-        until rclone copyto "$FINAL_ZIP" "$GDRIVE_PATH/Finals/$(basename "$FINAL_ZIP")"; do
-          echo "Upload final backup failed; retrying in 10s..."
-          sleep 10
-        done
-        until rclone copyto "current.zip" "$GDRIVE_PATH/current.zip"; do
-          echo "Upload current.zip failed; retrying in 10s..."
-          sleep 10
-        done
+        # Create GitHub Release and upload the final zip
+        gh release create "backup-$TS" "$FINAL_ZIP" \
+          --title "Final backup $TS" \
+          --notes "Automated final backup. See MEGA for the latest server state: $REMOTE/current"
 
-        # Create public link for final backup (if allowed)
-        LINK=$(rclone link "$GDRIVE_PATH/Finals/$(basename "$FINAL_ZIP")" 2>/dev/null | tail -n1 || true)
-        if [ -n "$LINK" ]; then
-          echo "### Final backup" >> $GITHUB_STEP_SUMMARY
-          echo "$LINK" >> $GITHUB_STEP_SUMMARY
-          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
-            curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-              -d chat_id="$TELEGRAM_CHAT_ID" -d text="💾 Final backup: $LINK" >/dev/null || true
-          fi
-        else
-          echo "Could not create public link (may be restricted)."
-        fi
-
-        # Trigger a new run of this workflow via repository_dispatch (safer than filename-based dispatch)
-        if [ -n "${GH_PAT:-}" ]; then
-          sleep 60
-          until curl -s -X POST \
-            -H "Authorization: token $GH_PAT" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/dispatches" \
-            -d '{"event_type":"mc_restart"}' >/dev/null; do
-            echo "Dispatch failed, retrying..."
-            sleep 10
-          done
-        else
-          echo "GH_PAT not set; skipping auto-restart."
-        fi
-
-        # Stop current workflow after another minute
+        # Auto-restart the workflow
+        sleep 60
+        gh workflow run "$(basename "${{ github.workflow_ref }}")" --ref main || echo "Redispatch failed."
+        
+        # Stop current server
         sleep 60
         kill -9 "$(cat mc.pid)" || true
-        echo "Workflow stopped."
+        echo "Workflow finished."
