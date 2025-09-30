@@ -1,45 +1,295 @@
-name: Skyport Panel & Wings with Public Access
+name: Minecraft Paper Server Rolling + ngrok/No-IP (Google Drive SA)
 
 on:
   workflow_dispatch:
 
 jobs:
-  install:
+  minecraft:
     runs-on: ubuntu-latest
+    timeout-minutes: 370
 
     steps:
-    - name: Install dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y curl git nodejs npm unzip
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        persist-credentials: false
 
-    - name: Install Skyport Panel
-      run: |
-        sudo bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/panel)
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '21'
 
-    - name: Install Wings Daemon
+    - name: Install tools
       run: |
-        sudo bash <(curl -s https://raw.githubusercontent.com/JishnuTheGamer/skyport/refs/heads/main/wings)
-        cd skyportd
-        echo '{}' > config.json  # Replace with actual config if needed
-        sudo npm install -g pm2
-        pm2 start .
+        sudo apt-get update -y
+        sudo apt-get install -y zip unzip jq curl dnsutils
+
+    - name: Setup rclone (Google Drive via Service Account)
+      env:
+        GDRIVE_SA_JSON: ${{ secrets.GDRIVE_SA_JSON }}
+        GDRIVE_REMOTE_PATH: ${{ secrets.GDRIVE_REMOTE_PATH }}
+      run: |
+        set -e
+        if [ -z "${GDRIVE_SA_JSON:-}" ]; then
+          echo "Missing secret GDRIVE_SA_JSON (paste full JSON key)"; exit 1
+        fi
+
+        # Install rclone
+        curl -fsSL https://rclone.org/install.sh | sudo bash
+
+        # Write Service Account JSON to a file
+        mkdir -p ~/.config/rclone
+        printf '%s' "$GDRIVE_SA_JSON" > $RUNNER_TEMP/sa.json
+
+        # Configure rclone remote "gdrive"
+        cat > ~/.config/rclone/rclone.conf <<EOF
+        [gdrive]
+        type = drive
+        scope = drive
+        service_account_file = $RUNNER_TEMP/sa.json
+        EOF
+
+        rclone version
+
+        # Choose remote path (default: gdrive:mcserver if none provided)
+        REMOTE="${GDRIVE_REMOTE_PATH:-gdrive:mcserver}"
+        echo "REMOTE=$REMOTE" >> $GITHUB_ENV
+
+        # Ensure folders exist
+        rclone mkdir "$REMOTE" || true
+        rclone mkdir "$REMOTE/Rolling" || true
+        rclone mkdir "$REMOTE/Finals" || true
+
+    - name: Download latest Paper build
+      run: |
+        set -e
+        # Get latest Paper version and build dynamically
+        VERSION=$(curl -fsSL https://api.papermc.io/v2/projects/paper | jq -r '.versions[-1]')
+        META=$(curl -fsSL "https://api.papermc.io/v2/projects/paper/versions/$VERSION/builds")
+        BUILD=$(echo "$META" | jq -r '.builds[-1].build')
+        JAR="paper-$VERSION-$BUILD.jar"
+        URL="https://api.papermc.io/v2/projects/paper/versions/$VERSION/builds/$BUILD/downloads/$JAR"
+
+        echo "Downloading $JAR ..."
+        until curl -fL -o "$JAR" "$URL"; do
+          echo "Download failed, retrying in 15s..."
+          sleep 15
+        done
+        echo "SERVER_JAR=$JAR" >> $GITHUB_ENV
+
+    - name: Accept EULA
+      run: echo "eula=true" > eula.txt
+
+    - name: Restore from Google Drive (if present)
+      run: |
+        set -e
+        if rclone ls "$REMOTE/current.zip" >/dev/null 2>&1; then
+          echo "Found previous backup on Drive; restoring..."
+          rclone copy "$REMOTE/current.zip" .
+          unzip -o current.zip
+          rm -f current.zip
+        else
+          echo "No previous backup found on Drive; starting fresh."
+        fi
 
     - name: Install ngrok
       run: |
-        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
-        echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
-        sudo apt update && sudo apt install -y ngrok
+        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc > /dev/null
+        echo "deb https://ngrok-agent.s3.amazonaws.com stable main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+        sudo apt-get update && sudo apt-get install -y ngrok
 
-    - name: Start ngrok tunnel for port 3001
+    - name: Start Minecraft Server
       run: |
-        ngrok config add-authtoken ${{ secrets.NGROK_AUTHTOKEN }}
-        nohup ngrok http 3001 > ngrok.log &
-        sleep 5
-        curl -s http://localhost:4040/api/tunnels > tunnels.json
-        cat tunnels.json
+        echo "Starting Minecraft server..."
+        # Safer memory for GitHub runner
+        java -Xms2G -Xmx6G -jar "$SERVER_JAR" nogui &
+        echo $! > mc.pid
 
-    - name: Show public URL
+    - name: Start ngrok TCP tunnel
+      env:
+        NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
       run: |
-        echo "Skyport Panel public URL:"
-        curl -s http://localhost:4040/api/tunnels | grep -o 'https://[^"]*'
+        set +e
+        if [ -n "${NGROK_AUTHTOKEN:-}" ]; then
+          ngrok authtoken "$NGROK_AUTHTOKEN" || true
+        else
+          echo "No NGROK_AUTHTOKEN provided; running ngrok unauthenticated."
+        fi
+        nohup ngrok tcp 25565 > ngrok.log 2>&1 &
+        # give ngrok time to come up
+        sleep 10
+
+    - name: Fetch ngrok TCP endpoint and numeric IP
+      run: |
+        set -e
+        # Try local introspection API first
+        NGROK_URL=$(curl -s http://127.0.0.1:4040/api/tunnels \
+          | jq -r '.tunnels[]? | select(.public_url | startswith("tcp://")) | .public_url' | head -n1 || true)
+
+        # Fallback: parse log if API not available
+        if [ -z "$NGROK_URL" ] || [ "$NGROK_URL" = "null" ]; then
+          NGROK_URL=$(grep -oE 'tcp://[^ ]+' ngrok.log | head -n1 || true)
+        fi
+
+        if [ -z "$NGROK_URL" ]; then
+          echo "No TCP tunnel found (ngrok may have failed to start)."
+          # Do not fail the run; continue without DNS/Telegram
+          exit 0
+        fi
+
+        HOST=$(echo "$NGROK_URL" | sed -E 's#tcp://([^:]+):.*#\1#')
+        PORT=$(echo "$NGROK_URL" | sed -E 's#tcp://[^:]+:([0-9]+)#\1#')
+        IP=$(dig +short "$HOST" | head -n 1)
+
+        echo "HOST=$HOST" >> $GITHUB_ENV
+        echo "PORT=$PORT" >> $GITHUB_ENV
+        echo "IP=$IP" >> $GITHUB_ENV
+
+        {
+          echo "### Minecraft Address"
+          echo "- Hostname: \`$HOST:$PORT\`"
+          if [ -n "$IP" ]; then
+            echo "- Numeric IP: \`$IP:$PORT\`"
+          fi
+        } >> $GITHUB_STEP_SUMMARY
+
+    - name: Setup No-IP Dynamic DNS
+      if: ${{ secrets.NOIP_USERNAME != '' && secrets.NOIP_PASSWORD != '' && secrets.NOIP_HOSTNAME != '' }}
+      env:
+        NOIP_USER: ${{ secrets.NOIP_USERNAME }}
+        NOIP_PASS: ${{ secrets.NOIP_PASSWORD }}
+        NOIP_HOST: ${{ secrets.NOIP_HOSTNAME }}
+      run: |
+        if [ -n "${IP:-}" ]; then
+          echo "Updating No-IP domain $NOIP_HOST → $IP"
+          curl -s -u "$NOIP_USER:$NOIP_PASS" \
+            "http://dynupdate.no-ip.com/nic/update?hostname=$NOIP_HOST&myip=$IP" || true
+        else
+          echo "IP unknown; skipping No-IP update."
+        fi
+
+    - name: Notify Telegram bot
+      if: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        NOIP_HOST: ${{ secrets.NOIP_HOSTNAME }}
+      run: |
+        # Prefer hostname if No-IP provided; else use raw ngrok address
+        ADDRESS="${NOIP_HOST:-}"
+        if [ -z "$ADDRESS" ] && [ -n "${HOST:-}" ] && [ -n "${PORT:-}" ]; then
+          ADDRESS="$HOST:$PORT"
+        elif [ -n "$ADDRESS" ] && [ -n "${PORT:-}" ]; then
+          ADDRESS="$ADDRESS:$PORT"
+        fi
+
+        if [ -n "$ADDRESS" ]; then
+          MESSAGE="🎮 Minecraft server is LIVE!\n\nConnect at:\n🌐 $ADDRESS"
+          curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+            -d chat_id="$TELEGRAM_CHAT_ID" \
+            -d text="$MESSAGE"
+        fi
+
+        # Start listener for /ip or /port commands (best-effort)
+        nohup bash -c '
+        OFFSET=0
+        while true; do
+          UPDATES=$(curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates?offset=$OFFSET&timeout=10")
+          COUNT=$(echo "$UPDATES" | jq ".result | length")
+          if [ "$COUNT" -gt 0 ]; then
+            for row in $(echo "$UPDATES" | jq -c ".result[]"); do
+              UPDATE_ID=$(echo "$row" | jq -r ".update_id")
+              TEXT=$(echo "$row" | jq -r ".message.text // empty")
+              OFFSET=$((UPDATE_ID+1))
+              if [[ "$TEXT" == "/ip" || "$TEXT" == "/port" ]]; then
+                REPLY="🎮 Server address:\n🌐 '"${ADDRESS:-unknown}"'"
+                curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+                  -d chat_id="$TELEGRAM_CHAT_ID" \
+                  -d text="$REPLY" >/dev/null
+              fi
+            done
+          fi
+          sleep 2
+        done
+        ' >/dev/null 2>&1 &
+
+    - name: Run Minecraft Server with Backup & Controller (Drive SA)
+      env:
+        GH_PAT: ${{ secrets.GH_PAT }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        set -euo pipefail
+        REMOTE="${REMOTE}"
+
+        mkdir -p Backup
+
+        # 10 cycles × 30 minutes ≈ 5 hours
+        for i in {1..10}; do
+          sleep 1800
+          echo "=== Backup cycle $i ==="
+
+          # Rotate local zips and upload rolling snapshots
+          for PART in 1 2 3 4; do
+            [ -f "Backup/${PART}.Backup-previous.zip" ] && rm -f "Backup/${PART}.Backup-previous.zip"
+            [ -f "Backup/${PART}.Backup-latest.zip" ] && mv "Backup/${PART}.Backup-latest.zip" "Backup/${PART}.Backup-previous.zip"
+            zip -rq "Backup/${PART}.Backup-latest.zip" world/ plugins/ config/ || true
+
+            rclone delete "$REMOTE/Rolling/${PART}.Backup-previous.zip" || true
+            rclone moveto "$REMOTE/Rolling/${PART}.Backup-latest.zip" "$REMOTE/Rolling/${PART}.Backup-previous.zip" || true
+            rclone copyto "Backup/${PART}.Backup-latest.zip" "$REMOTE/Rolling/${PART}.Backup-latest.zip"
+          done
+
+          # "current.zip" for fast restore next run
+          zip -rq "current.zip" world/ plugins/ config/ || true
+          rclone copyto "current.zip" "$REMOTE/current.zip"
+        done
+
+        echo "=== Final backup at ~5h ==="
+        TS=$(date -u +%Y%m%dT%H%M%SZ)
+        FINAL_ZIP="Backup/minecraft-backup-$TS.zip"
+        zip -rq "$FINAL_ZIP" world/ plugins/ config/ || true
+        rclone copyto "$FINAL_ZIP" "$REMOTE/Finals/$(basename "$FINAL_ZIP")"
+        rclone copyto "current.zip" "$REMOTE/current.zip"
+
+        # Create public link (best effort) and post to summary/Telegram
+        LINK=$(rclone link "$REMOTE/Finals/$(basename "$FINAL_ZIP")" | tail -n1 || true)
+        if [ -n "$LINK" ]; then
+          echo "### Final backup" >> $GITHUB_STEP_SUMMARY
+          echo "$LINK" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+            curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
+              -d chat_id="$TELEGRAM_CHAT_ID" -d text="💾 Final backup: $LINK" >/dev/null || true
+          fi
+        fi
+
+        # Trigger a new run of THIS workflow (auto-detect workflow id by name)
+        if [ -n "${GH_PAT:-}" ]; then
+          WF_NAME="${GITHUB_WORKFLOW}"
+          OWNER_REPO="${GITHUB_REPOSITORY}"
+          WF_ID=$(curl -s -H "Authorization: token $GH_PAT" \
+            "https://api.github.com/repos/$OWNER_REPO/actions/workflows" \
+            | jq -r --arg n "$WF_NAME" '.workflows[] | select(.name == $n) | .id' | head -n1)
+
+          if [ -n "$WF_ID" ]; then
+            sleep 60
+            until curl -s -X POST \
+              -H "Authorization: token $GH_PAT" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$OWNER_REPO/actions/workflows/$WF_ID/dispatches" \
+              -d '{"ref":"main"}' >/dev/null; do
+              echo "Dispatch failed, retrying..."
+              sleep 10
+            done
+          else
+            echo "Could not resolve workflow id for '$WF_NAME'; skipping redispatch."
+          fi
+        else
+          echo "GH_PAT not provided; skipping redispatch."
+        fi
+
+        # Stop current workflow after another minute
+        sleep 60
+        kill -9 $(cat mc.pid) || true
+        echo "Workflow stopped."
